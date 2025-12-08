@@ -41,6 +41,7 @@ const parseCSV = (text) => {
   };
 
   let headerIndex = 0;
+  // Robust Header Detection
   for (let i = 0; i < Math.min(lines.length, 25); i++) {
     const raw = lines[i].toLowerCase();
     if (raw.includes('lead record id') || 
@@ -70,12 +71,15 @@ const parseDate = (dateStr) => {
   if (!dateStr) return null;
   try {
     const cleanStr = dateStr.trim();
-    // 1. MM-DD-YYYY HH:mm (e.g. 11-05-2025 15:21) - Opportunities
-    // 2. MM-DD-YYYY hh:mm AM/PM (e.g. 11-26-2025 11:36 AM) - Leads
-    // 3. DD-MM-YYYY (e.g. 20-01-2024) - Inventory
-    // 4. DD-MM-YYYY (e.g. 03-11-2025) - Booking
+    // Helper to check validity
+    const isValid = (d) => !isNaN(d.getTime()) && d.getFullYear() > 2000;
 
-    let d = null;
+    // 1. Try ISO first (YYYY-MM-DD)
+    let d = new Date(cleanStr);
+    if (isValid(d)) return d;
+
+    // 2. Parse manually
+    // Remove time part: "11-05-2025 15:21" -> "11-05-2025"
     const datePart = cleanStr.split(/[\s,]+/)[0];
     const parts = datePart.split(/[-/.]/); 
 
@@ -84,30 +88,23 @@ const parseDate = (dateStr) => {
        const p2 = parseInt(parts[1]);
        const p3 = parseInt(parts[2]);
 
+       // Case A: DD-MM-YYYY or MM-DD-YYYY (Year last)
        if (p3 > 2000) { 
-          // Check for DD-MM-YYYY (Inventory/Booking)
-          if (p1 > 12) {
-             d = new Date(p3, p2 - 1, p1); 
-          }
-          // Check for MM-DD-YYYY (Opportunities/Leads)
-          else if (p2 > 12) {
-             d = new Date(p3, p1 - 1, p2);
-          }
-          // Ambiguous cases (e.g. 11-05-2025)
-          else {
-             // Defaulting to MM-DD-YYYY for Opportunities/Leads compatibility
-             d = new Date(p3, p1 - 1, p2);
-          }
-       } else if (p1 > 2000) { 
-          d = new Date(p1, p2 - 1, p3);
+          // Heuristic: If p1 > 12, it MUST be Day -> DD-MM-YYYY
+          if (p1 > 12) return new Date(p3, p2 - 1, p1);
+          // Heuristic: If p2 > 12, it MUST be Day -> MM-DD-YYYY
+          if (p2 > 12) return new Date(p3, p1 - 1, p2);
+          
+          // Ambiguous (e.g. 11-05-2025). 
+          // Default to MM-DD-YYYY (US) as it matches "Opportunities" file.
+          return new Date(p3, p1 - 1, p2);
+       }
+       // Case B: YYYY-MM-DD (Year first)
+       if (p1 > 2000) {
+          return new Date(p1, p2 - 1, p3);
        }
     }
-
-    if (!d || isNaN(d.getTime())) {
-       d = new Date(dateStr); 
-    }
-
-    return (!isNaN(d.getTime()) && d.getFullYear() > 2000) ? d : null;
+    return null;
   } catch (e) { return null; }
 };
 
@@ -143,13 +140,15 @@ const ImportWizard = ({ isOpen, onClose, onDataUploaded }) => {
             // ListofOpportunities__EN.csv (MM-DD-YYYY)
             item.id = row['id'] || row['ordernumber'] || item.id;
             
+            // Format: 11-05-2025 15:21 (MM-DD-YYYY)
+            // Force MM-DD-YYYY for this file type
             const dateRaw = row['createdon'];
             if(dateRaw) {
-               const datePart = dateRaw.split(' ')[0];
-               const parts = datePart.split('-');
-               if(parts.length===3) {
-                 item.date = new Date(parts[2], parts[0]-1, parts[1]).toISOString().split('T')[0];
-               }
+               const parts = dateRaw.split(' ')[0].split('-');
+               if(parts.length===3) item.date = new Date(parts[2], parts[0]-1, parts[1]).toISOString().split('T')[0];
+            } else {
+               // Fallback if missing
+               item.date = parseDate(row['createdon'])?.toISOString().split('T')[0];
             }
 
             item.consultant = row['assignedto'];
@@ -170,11 +169,9 @@ const ImportWizard = ({ isOpen, onClose, onDataUploaded }) => {
             
             const dateRaw = row['createdon'];
             if(dateRaw) {
-               const datePart = dateRaw.split(' ')[0];
-               const parts = datePart.split('-');
-               if(parts.length===3) {
-                 item.date = new Date(parts[2], parts[0]-1, parts[1]).toISOString().split('T')[0];
-               }
+               // Assuming MM-DD-YYYY
+               const parts = dateRaw.split(' ')[0].split('-');
+               if(parts.length===3) item.date = new Date(parts[2], parts[0]-1, parts[1]).toISOString().split('T')[0];
             } else {
                item.date = parseDate(row['createdon'])?.toISOString().split('T')[0];
             }
