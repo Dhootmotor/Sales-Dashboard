@@ -374,6 +374,9 @@ export default function App() {
   // Options
   const options = (key) => [...new Set(rawData.map(d => d[key]).filter(Boolean))].sort();
 
+  // Placeholders for Future Tabs
+  const placeholderData = [{ label: 'Data Pending', v1: 0, v2: 0 }];
+
   return (
     <div className="min-h-screen bg-slate-50/50 font-sans pb-10">
        <GlobalStyles />
@@ -403,7 +406,7 @@ export default function App() {
        </header>
 
        <main className="max-w-[1920px] mx-auto px-4 py-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-          {/* SALES FUNNEL */}
+          {/* 1. SALES FUNNEL */}
           <div className="rounded-lg shadow-sm border p-4 bg-white border-slate-200 hover:shadow-md transition-shadow">
              <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
                <div className="bg-blue-50 p-1.5 rounded text-blue-600"><LayoutDashboard className="w-4 h-4" /></div>
@@ -412,7 +415,7 @@ export default function App() {
              <ComparisonTable rows={funnelTable} headers={[prevMonth, currentMonth]} />
           </div>
 
-          {/* INVENTORY */}
+          {/* 2. INVENTORY */}
           <div className="rounded-lg shadow-sm border p-4 bg-white border-slate-200 hover:shadow-md transition-shadow">
              <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
                <div className="bg-orange-50 p-1.5 rounded text-orange-600"><Car className="w-4 h-4" /></div>
@@ -421,13 +424,40 @@ export default function App() {
              <ComparisonTable rows={inventoryTable} headers={['Previous', 'Current']} />
           </div>
 
-          {/* LEAD SOURCE */}
+          {/* 3. LEAD SOURCE */}
           <div className="rounded-lg shadow-sm border p-4 bg-white border-slate-200 hover:shadow-md transition-shadow">
              <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
                <div className="bg-emerald-50 p-1.5 rounded text-emerald-600"><TrendingUp className="w-4 h-4" /></div>
                <h3 className="font-bold text-slate-700">Lead Source Mix</h3>
              </div>
              <ComparisonTable rows={sourceStats.length ? sourceStats : [{label: 'No Data', v1:0, v2:0}]} headers={['', currentMonth]} />
+          </div>
+
+          {/* 4. CROSS-SELL (Placeholder) */}
+          <div className="rounded-lg shadow-sm border p-4 bg-white border-slate-200 hover:shadow-md transition-shadow">
+             <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
+               <div className="bg-purple-50 p-1.5 rounded text-purple-600"><FileSpreadsheet className="w-4 h-4" /></div>
+               <h3 className="font-bold text-slate-700">Cross-Sell</h3>
+             </div>
+             <ComparisonTable rows={placeholderData} headers={[prevMonth, currentMonth]} />
+          </div>
+
+          {/* 5. SALES MANAGEMENT (Placeholder) */}
+          <div className="rounded-lg shadow-sm border p-4 bg-white border-slate-200 hover:shadow-md transition-shadow">
+             <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
+               <div className="bg-cyan-50 p-1.5 rounded text-cyan-600"><Users className="w-4 h-4" /></div>
+               <h3 className="font-bold text-slate-700">Sales Management</h3>
+             </div>
+             <ComparisonTable rows={placeholderData} headers={[prevMonth, currentMonth]} />
+          </div>
+
+          {/* 6. PROFIT & PRODUCTIVITY (Placeholder) */}
+          <div className="rounded-lg shadow-sm border p-4 bg-white border-slate-200 hover:shadow-md transition-shadow">
+             <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
+               <div className="bg-rose-50 p-1.5 rounded text-rose-600"><DollarSign className="w-4 h-4" /></div>
+               <h3 className="font-bold text-slate-700">Profit & Productivity</h3>
+             </div>
+             <ComparisonTable rows={placeholderData} headers={[prevMonth, currentMonth]} />
           </div>
        </main>
     </div>
