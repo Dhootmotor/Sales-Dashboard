@@ -41,6 +41,7 @@ const parseCSV = (text) => {
   };
 
   let headerIndex = 0;
+  // Robust Header Detection
   for (let i = 0; i < Math.min(lines.length, 25); i++) {
     const raw = lines[i].toLowerCase();
     if (raw.includes('lead record id') || 
@@ -70,13 +71,15 @@ const parseDate = (dateStr) => {
   if (!dateStr) return null;
   try {
     const cleanStr = dateStr.trim();
-    // 1. MM-DD-YYYY HH:mm (e.g. 11-05-2025 15:21) - Opportunities
-    // 2. MM-DD-YYYY hh:mm AM/PM (e.g. 11-26-2025 11:36 AM) - Leads
-    // 3. DD-MM-YYYY (e.g. 20-01-2024) - Inventory
-    // 4. DD-MM-YYYY (e.g. 03-11-2025) - Booking
+    // Helper to check validity
+    const isValid = (d) => !isNaN(d.getTime()) && d.getFullYear() > 2000;
 
-    let d = null;
-    // Split by common separators, ignoring time part for now
+    // 1. Try ISO first (YYYY-MM-DD)
+    let d = new Date(cleanStr);
+    if (isValid(d)) return d;
+
+    // 2. Parse manually
+    // Remove time part: "11-05-2025 15:21" -> "11-05-2025"
     const datePart = cleanStr.split(/[\s,]+/)[0];
     const parts = datePart.split(/[-/.]/); 
 
@@ -85,31 +88,23 @@ const parseDate = (dateStr) => {
        const p2 = parseInt(parts[1]);
        const p3 = parseInt(parts[2]);
 
-       if (p3 > 2000) { // Format XX-XX-YYYY
-          // Check for DD-MM-YYYY (Inventory/Booking)
-          if (p1 > 12) {
-             d = new Date(p3, p2 - 1, p1); 
-          }
-          // Check for MM-DD-YYYY (Opportunities/Leads)
-          else if (p2 > 12) {
-             d = new Date(p3, p1 - 1, p2);
-          }
-          // Ambiguous cases (e.g. 11-05-2025)
-          else {
-             // Heuristic based on known file types or standard US format
-             // Defaulting to MM-DD-YYYY for Opportunities/Leads compatibility
-             d = new Date(p3, p1 - 1, p2);
-          }
-       } else if (p1 > 2000) { // YYYY-MM-DD
-          d = new Date(p1, p2 - 1, p3);
+       // Case A: DD-MM-YYYY or MM-DD-YYYY (Year last)
+       if (p3 > 2000) { 
+          // Heuristic: If p1 > 12, it MUST be Day -> DD-MM-YYYY
+          if (p1 > 12) return new Date(p3, p2 - 1, p1);
+          // Heuristic: If p2 > 12, it MUST be Day -> MM-DD-YYYY
+          if (p2 > 12) return new Date(p3, p1 - 1, p2);
+          
+          // Ambiguous (e.g. 11-05-2025). 
+          // Default to MM-DD-YYYY (US) as it matches "Opportunities" file.
+          return new Date(p3, p1 - 1, p2);
+       }
+       // Case B: YYYY-MM-DD (Year first)
+       if (p1 > 2000) {
+          return new Date(p1, p2 - 1, p3);
        }
     }
-
-    if (!d || isNaN(d.getTime())) {
-       d = new Date(dateStr); 
-    }
-
-    return (!isNaN(d.getTime()) && d.getFullYear() > 2000) ? d : null;
+    return null;
   } catch (e) { return null; }
 };
 
@@ -142,27 +137,23 @@ const ImportWizard = ({ isOpen, onClose, onDataUploaded }) => {
 
           // --- MAPPING LOGIC ---
           if (uploadType === 'funnel') { 
-            // ListofOpportunities__EN.csv
-            // ID: ID or Order Number
+            // ListofOpportunities__EN.csv (MM-DD-YYYY)
             item.id = row['id'] || row['ordernumber'] || item.id;
             
-            // Date: Created On (MM-DD-YYYY HH:mm)
-            // Manual parse to ensure 11-05 is Nov 5
+            // Format: 11-05-2025 15:21 (MM-DD-YYYY)
+            // Force MM-DD-YYYY for this file type
             const dateRaw = row['createdon'];
             if(dateRaw) {
-               const datePart = dateRaw.split(' ')[0];
-               const parts = datePart.split('-');
-               if(parts.length===3) {
-                 // Assuming MM-DD-YYYY based on your description
-                 item.date = new Date(parts[2], parts[0]-1, parts[1]).toISOString().split('T')[0];
-               }
+               const parts = dateRaw.split(' ')[0].split('-');
+               if(parts.length===3) item.date = new Date(parts[2], parts[0]-1, parts[1]).toISOString().split('T')[0];
+            } else {
+               // Fallback if missing
+               item.date = parseDate(row['createdon'])?.toISOString().split('T')[0];
             }
 
-            // Executive Tracking: Assigned To
             item.consultant = row['assignedto'];
-            
             item.model = row['modellinefe'];
-            item.location = row['dealercode'] || row['dealername'];
+            item.location = row['dealercode'] || row['dealername'] || 'Unknown';
             
             const td = row['testdrivecompleted'] || '';
             item.is_test_drive = td.toLowerCase().includes('yes') || td.toLowerCase().includes('done');
@@ -170,21 +161,19 @@ const ImportWizard = ({ isOpen, onClose, onDataUploaded }) => {
             const score = row['opportunityofflinescore'] || row['zqualificationlevel'] || '';
             item.is_hot = score.toLowerCase().includes('hot') || parseInt(score) > 80;
             
-            // Customer Matching Keys for later
             item.customer_name = row['customer'] || row['firstmiddlename']; 
           } 
           else if (uploadType === 'source') {
-            // ListofLeadsCreatedinMarketing__EN.csv
+            // ListofLeadsCreatedinMarketing__EN.csv (MM-DD-YYYY)
             item.id = row['leadid'] || item.id;
             
-            // Date: Created On (MM-DD-YYYY hh:mm AM/PM)
             const dateRaw = row['createdon'];
             if(dateRaw) {
-               const datePart = dateRaw.split(' ')[0];
-               const parts = datePart.split('-');
-               if(parts.length===3) {
-                 item.date = new Date(parts[2], parts[0]-1, parts[1]).toISOString().split('T')[0];
-               }
+               // Assuming MM-DD-YYYY
+               const parts = dateRaw.split(' ')[0].split('-');
+               if(parts.length===3) item.date = new Date(parts[2], parts[0]-1, parts[1]).toISOString().split('T')[0];
+            } else {
+               item.date = parseDate(row['createdon'])?.toISOString().split('T')[0];
             }
 
             item.model = row['modellinefe'];
@@ -194,33 +183,34 @@ const ImportWizard = ({ isOpen, onClose, onDataUploaded }) => {
             item.stage = row['qualificationlevel'];
           }
           else if (uploadType === 'booking') {
-            // EXPORT- Booking to delivery data.csv
+            // EXPORT- Booking to delivery data.csv (DD-MM-YYYY)
             item.id = row['salesordernumber'] || row['dbmorder'] || item.id;
             
-            // Date: Document Date (DD-MM-YYYY)
-            // Retail Date: Invoice Date (DD-MM-YYYY)
             const parseDDMM = (dStr) => {
                 if(!dStr) return null;
-                const parts = dStr.split('-');
+                const parts = dStr.split('-'); // 22-11-2025
                 if(parts.length===3) return new Date(parts[2], parts[1]-1, parts[0]).toISOString().split('T')[0];
-                return null;
+                // Try parseDate as fallback
+                const fallback = parseDate(dStr);
+                return fallback ? fallback.toISOString().split('T')[0] : null;
             }
             
+            // Prioritize Document Date for Booking
             item.date = parseDDMM(row['documentdate'] || row['bookingdate']);
+            // Prioritize Invoice Date for Retail
             item.retail_date = parseDDMM(row['invoicedate'] || row['invoicedatev'] || row['billingdate']);
             
             item.model = row['modelsalescode'] || row['modelline'] || row['model'];
             item.location = row['dealercode'];
-            item.consultant = row['employeename'] || row['salesconsultant']; // Check headers for employee name
-            item.customer_name = row['customername']; // For matching
+            item.consultant = row['employeename'] || row['salesconsultant']; 
+            item.customer_name = row['customername']; 
             
             item.stage = item.retail_date ? 'Retail' : 'Booking';
           }
           else if (uploadType === 'inventory') {
-            // EXPORT Inventory.csv
+            // EXPORT Inventory.csv (DD-MM-YYYY)
             item.id = row['vehicleidentificationnumber'] || row['vin'] || item.id;
             
-            // Date: GRN Date (DD-MM-YYYY)
             const parseDDMM = (dStr) => {
                 if(!dStr) return null;
                 const parts = dStr.split('-');
