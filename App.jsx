@@ -43,12 +43,21 @@ const parseCSV = (text) => {
   let headerIndex = 0;
   for (let i = 0; i < Math.min(lines.length, 25); i++) {
     const raw = lines[i].toLowerCase();
-    if (raw.includes('lead record id') || raw.includes('vehicle identification number') || raw.includes('lead id') || raw.includes('dbm order')) {
+    // Improved detection based on your file headers
+    if (raw.includes('lead record id') || 
+        raw.includes('vehicle identification number') || 
+        raw.includes('lead id') || 
+        raw.includes('dbm order') ||
+        raw.includes('order number') || // Common in Opportunities file
+        raw.includes('model line(fe)') // Specific to your files
+       ) {
       headerIndex = i; break;
     }
   }
 
   const headers = parseLine(lines[headerIndex]).map(normalizeKey);
+  console.log("Detected Headers:", headers); // Debugging
+
   return lines.slice(headerIndex + 1).map((line) => {
     const values = parseLine(line);
     const row = {};
@@ -60,32 +69,37 @@ const parseCSV = (text) => {
 const parseDate = (dateStr) => {
   if (!dateStr) return null;
   try {
-    // Handle "11-26-2025" or "11-26-2025 04:59 PM" (MM-DD-YYYY format)
-    // Clean time part first
-    const cleanStr = dateStr.split(' ')[0]; 
-    const parts = cleanStr.split(/[-/]/); 
+    // Clean string (remove time part if present)
+    const cleanStr = dateStr.split(',')[0].split(' ')[0].trim();
     let d = null;
 
-    if (parts.length === 3) {
-        // Try MM-DD-YYYY (US Format - Common in your files like ListofOpportunities)
-        const p1 = parseInt(parts[0]);
-        const p2 = parseInt(parts[1]);
-        const p3 = parseInt(parts[2]); // Year
-
-        // Check if p1 is likely Month (1-12) and p2 is Day (1-31)
-        if (p1 <= 12 && p2 <= 31) {
-            d = new Date(p3, p1 - 1, p2); // MM-DD-YYYY
-        } else if (p2 <= 12 && p1 <= 31) {
-            d = new Date(p3, p2 - 1, p1); // DD-MM-YYYY fallback
-        }
-    }
-
-    // Fallback to standard parser
-    if (!d || isNaN(d.getTime())) {
-        d = new Date(dateStr);
-    }
+    // Try MM-DD-YYYY or DD-MM-YYYY (Common formats)
+    const parts = cleanStr.split(/[-/]/);
     
-    return (!isNaN(d.getTime()) && d.getFullYear() > 2020) ? d : null;
+    if (parts.length === 3) {
+      const p1 = parseInt(parts[0]);
+      const p2 = parseInt(parts[1]);
+      const p3 = parseInt(parts[2]);
+      
+      // Heuristic: If 1st part > 12, it must be Day (DD-MM-YYYY)
+      if (p1 > 12) {
+         d = new Date(p3, p2 - 1, p1); 
+      } 
+      // If 2nd part > 12, 1st part must be Month (MM-DD-YYYY)
+      else if (p2 > 12) {
+         d = new Date(p3, p1 - 1, p2);
+      }
+      // Ambiguous (e.g. 05-06-2025): Default to US format (MM-DD-YYYY) for your specific files
+      else {
+         d = new Date(p3, p1 - 1, p2);
+      }
+    }
+
+    if (!d || isNaN(d.getTime())) {
+       d = new Date(dateStr); // Fallback to standard parser
+    }
+
+    return (!isNaN(d.getTime()) && d.getFullYear() > 2000) ? d : null;
   } catch (e) { return null; }
 };
 
@@ -105,6 +119,7 @@ const ImportWizard = ({ isOpen, onClose, onDataUploaded }) => {
     reader.onload = async (e) => {
       try {
         const rows = parseCSV(e.target.result);
+        console.log("Parsed Rows:", rows.slice(0, 2)); // Debugging
         setStatus(`Parsed ${rows.length} rows. Uploading...`);
 
         const payload = rows.map(row => {
@@ -116,12 +131,13 @@ const ImportWizard = ({ isOpen, onClose, onDataUploaded }) => {
             ageing: 0
           };
 
-          // --- MAPPING LOGIC ---
+          // --- MAPPING LOGIC (Updated for your headers) ---
           if (uploadType === 'funnel') { 
-            item.id = row['id'] || row['leadrecordid'] || item.id;
+            // ListofOpportunities__EN.csv
+            item.id = row['id'] || row['ordernumber'] || item.id;
             item.date = parseDate(row['createdon'])?.toISOString().split('T')[0];
-            item.model = row['modellinefe'] || row['model'];
-            item.location = row['dealercode'] || row['dealername'];
+            item.model = row['modellinefe'] || row['modelline'];
+            item.location = row['dealercode'] || row['dealername'] || 'Unknown';
             item.consultant = row['assignedto'];
             
             const td = row['testdrivecompleted'] || '';
@@ -131,6 +147,7 @@ const ImportWizard = ({ isOpen, onClose, onDataUploaded }) => {
             item.is_hot = score.toLowerCase().includes('hot') || parseInt(score) > 80;
           } 
           else if (uploadType === 'source') {
+            // ListofLeadsCreatedinMarketing__EN.csv
             item.id = row['leadid'] || item.id;
             item.date = parseDate(row['createdon'])?.toISOString().split('T')[0];
             item.model = row['modellinefe'];
@@ -140,15 +157,18 @@ const ImportWizard = ({ isOpen, onClose, onDataUploaded }) => {
             item.stage = row['qualificationlevel'];
           }
           else if (uploadType === 'booking') {
+            // EXPORT- Booking to delivery data.csv
             item.id = row['salesordernumber'] || row['dbmorder'] || item.id;
             item.date = parseDate(row['bookingdate'])?.toISOString().split('T')[0];
-            item.retail_date = parseDate(row['invoicedate'] || row['invoicedatev'])?.toISOString().split('T')[0];
-            item.model = row['modelsalescode'] || row['model'];
+            // Fix: Handle 'invoicedatev' or 'invoicedate'
+            item.retail_date = parseDate(row['invoicedate'] || row['invoicedatev'] || row['billingdate'])?.toISOString().split('T')[0];
+            item.model = row['modelsalescode'] || row['modelline'] || row['model'];
             item.location = row['dealercode'];
             item.stage = item.retail_date ? 'Retail' : 'Booking';
           }
           else if (uploadType === 'inventory') {
-            item.id = row['vehicleidentificationnumber'] || item.id;
+            // EXPORT Inventory.csv
+            item.id = row['vehicleidentificationnumber'] || row['vin'] || item.id;
             item.date = parseDate(row['grndate'])?.toISOString().split('T')[0];
             item.model = row['modelline'];
             item.location = row['dealercode'];
@@ -160,10 +180,13 @@ const ImportWizard = ({ isOpen, onClose, onDataUploaded }) => {
           return item;
         });
 
+        // Filter out invalid rows (missing ID or Date) to prevent DB errors
+        const validPayload = payload.filter(p => p.date); 
+
         // Batch Upload
-        const batchSize = 1000;
-        for (let i = 0; i < payload.length; i += batchSize) {
-          const chunk = payload.slice(i, i + batchSize);
+        const batchSize = 500;
+        for (let i = 0; i < validPayload.length; i += batchSize) {
+          const chunk = validPayload.slice(i, i + batchSize);
           await fetch(`${SUPABASE_URL}/rest/v1/sales_leads`, {
             method: 'POST',
             headers: {
@@ -200,10 +223,10 @@ const ImportWizard = ({ isOpen, onClose, onDataUploaded }) => {
           <label className="block text-sm font-bold text-slate-700">1. What file is this?</label>
           <div className="grid grid-cols-2 gap-3">
             {[
-              { id: 'funnel', label: 'Opportunities', sub: 'ListofOpportunities.csv', icon: LayoutDashboard, color: 'blue' },
-              { id: 'source', label: 'Marketing Leads', sub: 'ListofLeads.csv', icon: TrendingUp, color: 'emerald' },
-              { id: 'booking', label: 'Booking/Retail', sub: 'Booking-Delivery.csv', icon: DollarSign, color: 'violet' },
-              { id: 'inventory', label: 'Inventory', sub: 'EXPORT Inventory.csv', icon: Car, color: 'orange' }
+              { id: 'funnel', label: 'Opportunities', sub: 'Inquiries, Hot Leads', icon: LayoutDashboard, color: 'blue' },
+              { id: 'source', label: 'Marketing Leads', sub: 'Lead Sources', icon: TrendingUp, color: 'emerald' },
+              { id: 'booking', label: 'Booking/Retail', sub: 'Conversions', icon: DollarSign, color: 'violet' },
+              { id: 'inventory', label: 'Inventory', sub: 'Stock, Ageing', icon: Car, color: 'orange' }
             ].map((type) => (
               <button 
                 key={type.id}
@@ -293,16 +316,18 @@ export default function App() {
       setRawData(data || []);
       if(data?.length) {
         setLastUpdated(new Date());
-        // Smart Date Detection: Find the latest available month in the DB to avoid showing empty screens
+        // Smart Date Detection
         const validMonths = [...new Set(data.map(d => d.month).filter(m => m && m.match(/^\d{4}-\d{2}$/)))].sort();
         if (validMonths.length > 0) {
            const latest = validMonths[validMonths.length - 1];
            setCurrentMonth(latest);
-           // Set Prev Month Logic
+           // Calculate prev month
            const [y, m] = latest.split('-');
-           const prevD = new Date(y, m - 2, 1);
-           const prevStr = prevD.toISOString().slice(0, 7);
-           setPrevMonth(prevStr);
+           const prevD = new Date(parseInt(y), parseInt(m) - 2, 1); // Month is 0-indexed in JS Date
+           // Manual format to avoid timezone issues
+           const py = prevD.getFullYear();
+           const pm = String(prevD.getMonth() + 1).padStart(2, '0');
+           setPrevMonth(`${py}-${pm}`);
         }
       }
     } catch (err) { console.error(err); } finally { setLoading(false); }
@@ -313,9 +338,9 @@ export default function App() {
   // --- DERIVED DATA ---
   const filteredData = useMemo(() => {
     return rawData.filter(item => {
-      const matchModel = filters.model === 'All' || item.model === filters.model;
-      const matchLoc = filters.location === 'All' || item.location === filters.location;
-      const matchCons = filters.consultant === 'All' || item.consultant === filters.consultant;
+      const matchModel = filters.model === 'All' || !item.model || item.model === filters.model;
+      const matchLoc = filters.location === 'All' || !item.location || item.location === filters.location;
+      const matchCons = filters.consultant === 'All' || !item.consultant || item.consultant === filters.consultant;
       return matchModel && matchLoc && matchCons;
     });
   }, [rawData, filters]);
@@ -331,9 +356,10 @@ export default function App() {
     const inquiries = funnelData.filter(d => d.month === month).length;
     const testDrives = funnelData.filter(d => d.month === month && d.is_test_drive).length;
     const hotLeads = funnelData.filter(d => d.month === month && d.is_hot).length;
+    
+    // Booking File contains both Bookings and Retails (via invoice date)
     const bookings = bookingData.filter(d => d.month === month).length;
-    const retailMonth = month; 
-    const retails = bookingData.filter(d => d.retail_date && d.retail_date.startsWith(retailMonth)).length;
+    const retails = bookingData.filter(d => d.retail_date && d.retail_date.startsWith(month)).length;
 
     return { inquiries, testDrives, hotLeads, bookings, retails };
   };
@@ -378,7 +404,7 @@ export default function App() {
   // Options
   const options = (key) => [...new Set(rawData.map(d => d[key]).filter(Boolean))].sort();
 
-  // --- TABLES FOR OTHER TABS (With Correct Headings) ---
+  // --- TABLES FOR OTHER TABS ---
   const crossSellTable = [
     { label: 'Car Finance', v1: 0, v2: 0, sub2: '0%' },
     { label: 'Insurance', v1: 0, v2: 0, sub2: '0%' },
