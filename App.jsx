@@ -22,8 +22,6 @@ const GlobalStyles = () => (
   `}</style>
 );
 
-const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658', '#8dd1e1'];
-
 // --- PARSING UTILS ---
 const normalizeKey = (key) => key ? key.trim().toLowerCase().replace(/[\s_().-]/g, '') : '';
 
@@ -45,11 +43,9 @@ const parseCSV = (text) => {
     return result;
   };
 
-  // Smart header detection
   let headerIndex = 0;
   for (let i = 0; i < Math.min(lines.length, 25); i++) {
     const raw = lines[i].toLowerCase();
-    // Detect header row based on known unique columns from your files
     if (raw.includes('lead record id') || raw.includes('vehicle identification number') || raw.includes('lead id') || raw.includes('dbm order')) {
       headerIndex = i; break;
     }
@@ -67,27 +63,42 @@ const parseCSV = (text) => {
 const parseDate = (dateStr) => {
   if (!dateStr) return null;
   try {
-    // Handle "11-26-2025" or "2025-11-26" or "26-11-2025"
+    // Attempt standard Date parse first
     let d = new Date(dateStr);
-    if (isNaN(d.getTime())) {
-       const parts = dateStr.split(' ')[0].split(/[-/]/); // Split date part
+    
+    // If Invalid or weird year (like 1970 for empty), try manual parsing
+    if (isNaN(d.getTime()) || d.getFullYear() < 2020) {
+       // Look for patterns like DD-MM-YYYY or MM/DD/YYYY
+       // We'll strip time parts first if present
+       const cleanStr = dateStr.split(' ')[0]; 
+       const parts = cleanStr.split(/[-/]/); 
+       
        if (parts.length === 3) {
-         // Try MM-DD-YYYY
-         d = new Date(`${parts[0]}-${parts[1]}-${parts[2]}`);
-         // If invalid or month > 12, try DD-MM-YYYY (Common in India/Export files)
-         if (isNaN(d.getTime()) || d.getMonth() !== parseInt(parts[0]) - 1) {
-            d = new Date(`${parts[1]}-${parts[0]}-${parts[2]}`);
+         // Assume DD-MM-YYYY first (common in non-US CSVs)
+         // parts[0] = Day, parts[1] = Month, parts[2] = Year
+         const day = parseInt(parts[0]);
+         const month = parseInt(parts[1]);
+         const year = parseInt(parts[2]); // Handle 2-digit years if needed, mostly 4 digit
+
+         // Valid month check (1-12)
+         if (month > 0 && month <= 12 && day > 0 && day <= 31) {
+            d = new Date(year, month - 1, day);
+         } else {
+            // Fallback to MM-DD-YYYY
+            d = new Date(year, day - 1, month);
          }
        }
     }
-    return !isNaN(d.getTime()) ? d : null;
+    
+    // Final Validity Check
+    return (!isNaN(d.getTime()) && d.getFullYear() > 2020) ? d : null;
   } catch (e) { return null; }
 };
 
 // --- IMPORT WIZARD ---
 const ImportWizard = ({ isOpen, onClose, onDataUploaded }) => {
   const [file, setFile] = useState(null);
-  const [uploadType, setUploadType] = useState('funnel'); // funnel, source, booking, inventory
+  const [uploadType, setUploadType] = useState('funnel');
   const [processing, setProcessing] = useState(false);
   const [status, setStatus] = useState('');
 
@@ -100,11 +111,11 @@ const ImportWizard = ({ isOpen, onClose, onDataUploaded }) => {
     reader.onload = async (e) => {
       try {
         const rows = parseCSV(e.target.result);
-        setStatus(`Processing ${rows.length} rows...`);
+        setStatus(`Parsed ${rows.length} rows. Uploading...`);
 
         const payload = rows.map(row => {
           let item = { 
-            id: `gen-${Math.random()}`, 
+            id: `gen-${Math.random().toString(36).substr(2, 9)}`, 
             dataset_type: uploadType,
             // Defaults
             is_test_drive: false, 
@@ -112,10 +123,8 @@ const ImportWizard = ({ isOpen, onClose, onDataUploaded }) => {
             ageing: 0
           };
 
-          // --- MAPPING LOGIC PER FILE TYPE ---
-          
+          // --- MAPPING LOGIC ---
           if (uploadType === 'funnel') { 
-            // File: ListofOpportunities__EN.csv
             item.id = row['id'] || row['leadrecordid'] || item.id;
             item.date = parseDate(row['createdon'])?.toISOString().split('T')[0];
             item.model = row['modellinefe'] || row['model'];
@@ -129,17 +138,15 @@ const ImportWizard = ({ isOpen, onClose, onDataUploaded }) => {
             item.is_hot = score.toLowerCase().includes('hot') || parseInt(score) > 80;
           } 
           else if (uploadType === 'source') {
-            // File: ListofLeadsCreatedinMarketing__EN.csv
             item.id = row['leadid'] || item.id;
             item.date = parseDate(row['createdon'])?.toISOString().split('T')[0];
             item.model = row['modellinefe'];
-            item.location = row['city'] || 'Unknown'; // Leads file often has City, not Dealer Code
+            item.location = row['city'] || 'Unknown';
             item.consultant = row['owner'];
             item.source = row['source'];
             item.stage = row['qualificationlevel'];
           }
           else if (uploadType === 'booking') {
-            // File: EXPORT- Booking to delivery data.csv
             item.id = row['salesordernumber'] || row['dbmorder'] || item.id;
             item.date = parseDate(row['bookingdate'])?.toISOString().split('T')[0];
             item.retail_date = parseDate(row['invoicedate'] || row['invoicedatev'])?.toISOString().split('T')[0];
@@ -148,22 +155,19 @@ const ImportWizard = ({ isOpen, onClose, onDataUploaded }) => {
             item.stage = item.retail_date ? 'Retail' : 'Booking';
           }
           else if (uploadType === 'inventory') {
-            // File: EXPORT Inventory.csv
             item.id = row['vehicleidentificationnumber'] || item.id;
-            item.date = parseDate(row['grndate'])?.toISOString().split('T')[0]; // Ageing starts from GRN
+            item.date = parseDate(row['grndate'])?.toISOString().split('T')[0];
             item.model = row['modelline'];
             item.location = row['dealercode'];
-            item.stage = row['primarystatus']; // e.g. Free, Booked
+            item.stage = row['primarystatus']; 
             item.ageing = parseInt(row['ageingdays'] || '0');
           }
 
-          // Common Fields Cleanup
           if (item.date) item.month = item.date.slice(0, 7);
           return item;
         });
 
         // Batch Upload
-        setStatus('Uploading to Database...');
         const batchSize = 1000;
         for (let i = 0; i < payload.length; i += batchSize) {
           const chunk = payload.slice(i, i + batchSize);
@@ -294,7 +298,16 @@ export default function App() {
       });
       const data = await response.json();
       setRawData(data || []);
-      if(data?.length) setLastUpdated(new Date());
+      if(data?.length) {
+        setLastUpdated(new Date());
+        // Auto-detect latest month from data if available, to avoid showing 0s
+        const months = [...new Set(data.map(d => d.month).filter(Boolean))].sort();
+        if (months.length > 0) {
+           const latest = months[months.length - 1];
+           // Only update if our default 2025-11 is not valid for this data
+           if (latest > '2025-11') setCurrentMonth(latest);
+        }
+      }
     } catch (err) { console.error(err); } finally { setLoading(false); }
   };
 
@@ -318,14 +331,11 @@ export default function App() {
 
   // 1. Sales Funnel Stats
   const getFunnelStats = (month) => {
-    // Inquiries from Funnel file
     const inquiries = funnelData.filter(d => d.month === month).length;
     const testDrives = funnelData.filter(d => d.month === month && d.is_test_drive).length;
     const hotLeads = funnelData.filter(d => d.month === month && d.is_hot).length;
-    // Conversions from Booking file
     const bookings = bookingData.filter(d => d.month === month).length;
-    // Retails based on Retail Date
-    const retailMonth = month; // Matches YYYY-MM
+    const retailMonth = month; 
     const retails = bookingData.filter(d => d.retail_date && d.retail_date.startsWith(retailMonth)).length;
 
     return { inquiries, testDrives, hotLeads, bookings, retails };
@@ -342,12 +352,10 @@ export default function App() {
     { label: 'Retail Conversion', v1: prevF.retails, v2: currF.retails, sub2: currF.bookings ? Math.round(currF.retails/currF.bookings*100)+'%' : '' },
   ];
 
-  // 2. Inventory Stats (Snapshot, not month based usually, but we filter by current view if needed)
-  // For inventory, we often just want "Current Status", so we ignore month filters usually, or filter by 'latest'.
-  // Here we just aggregate the total current inventory.
+  // 2. Inventory Stats (Snapshot)
   const invStats = {
     total: inventoryData.length,
-    open: inventoryData.filter(d => d.stage?.toLowerCase().includes('free') || d.stage?.toLowerCase().includes('invoice created')).length, // Adjust based on "Primary Status"
+    open: inventoryData.filter(d => d.stage?.toLowerCase().includes('free') || d.stage?.toLowerCase().includes('invoice created') || d.stage?.toLowerCase().includes('initial')).length,
     booked: inventoryData.filter(d => d.stage?.toLowerCase().includes('booked')).length,
     ageing: inventoryData.filter(d => d.ageing > 90).length
   };
@@ -364,7 +372,6 @@ export default function App() {
     const counts = {};
     data.forEach(d => { counts[d.source] = (counts[d.source] || 0) + 1; });
     const total = data.length || 1;
-    // Return top 5
     return Object.entries(counts)
       .sort((a,b) => b[1] - a[1])
       .slice(0, 5)
@@ -374,7 +381,7 @@ export default function App() {
   // Options
   const options = (key) => [...new Set(rawData.map(d => d[key]).filter(Boolean))].sort();
 
-  // Placeholders for Future Tabs
+  // Placeholders
   const placeholderData = [{ label: 'Data Pending', v1: 0, v2: 0 }];
 
   return (
