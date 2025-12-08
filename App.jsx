@@ -41,7 +41,6 @@ const parseCSV = (text) => {
   };
 
   let headerIndex = 0;
-  // Look for specific known headers to find the start of the table
   for (let i = 0; i < Math.min(lines.length, 25); i++) {
     const raw = lines[i].toLowerCase();
     if (raw.includes('lead record id') || 
@@ -71,55 +70,43 @@ const parseDate = (dateStr) => {
   if (!dateStr) return null;
   try {
     const cleanStr = dateStr.trim();
-    // Regex for various formats
     // 1. MM-DD-YYYY HH:mm (e.g. 11-05-2025 15:21) - Opportunities
     // 2. MM-DD-YYYY hh:mm AM/PM (e.g. 11-26-2025 11:36 AM) - Leads
     // 3. DD-MM-YYYY (e.g. 20-01-2024) - Inventory
     // 4. DD-MM-YYYY (e.g. 03-11-2025) - Booking
 
     let d = null;
-    const parts = cleanStr.split(/[-/ .]/); // Split by dash, slash, space or dot
+    // Split by common separators, ignoring time part for now
+    const datePart = cleanStr.split(/[\s,]+/)[0];
+    const parts = datePart.split(/[-/.]/); 
 
-    if (parts.length >= 3) {
+    if (parts.length === 3) {
        const p1 = parseInt(parts[0]);
        const p2 = parseInt(parts[1]);
        const p3 = parseInt(parts[2]);
 
-       // Heuristic Logic:
-       // If Year is first (YYYY-MM-DD) - unlikely based on your files
-       if (p1 > 2000) {
-          d = new Date(p1, p2 - 1, p3);
-       }
-       // If 3rd part is year (most likely)
-       else if (p3 > 2000) {
+       if (p3 > 2000) { // Format XX-XX-YYYY
           // Check for DD-MM-YYYY (Inventory/Booking)
-          // If p1 > 12, it HAS to be Day.
           if (p1 > 12) {
              d = new Date(p3, p2 - 1, p1); 
           }
-          // If p2 > 12, p1 HAS to be Month (MM-DD-YYYY) - Opportunities/Leads
+          // Check for MM-DD-YYYY (Opportunities/Leads)
           else if (p2 > 12) {
              d = new Date(p3, p1 - 1, p2);
           }
-          // Ambiguous (e.g. 11-05-2025 vs 03-11-2025)
-          // Based on your specific file descriptions:
-          // Opportunities/Leads = MM-DD-YYYY
-          // Inventory/Booking = DD-MM-YYYY
+          // Ambiguous cases (e.g. 11-05-2025)
           else {
-             // We can't know for sure without the filename context here, 
-             // but we can try to guess or use a default.
-             // Defaulting to MM-DD-YYYY as it matches the "Opportunities" file (critical for enquiries)
-             // However, for consistency, let's look at the separator? No, usually normalized.
-             
-             // Let's assume MM-DD-YYYY for now as it fixes the "0 Enquiries" issue 
-             // (11-05-2025 -> Nov 5, not May 11)
+             // Heuristic based on known file types or standard US format
+             // Defaulting to MM-DD-YYYY for Opportunities/Leads compatibility
              d = new Date(p3, p1 - 1, p2);
           }
+       } else if (p1 > 2000) { // YYYY-MM-DD
+          d = new Date(p1, p2 - 1, p3);
        }
     }
 
     if (!d || isNaN(d.getTime())) {
-       d = new Date(dateStr); // Standard fallback
+       d = new Date(dateStr); 
     }
 
     return (!isNaN(d.getTime()) && d.getFullYear() > 2000) ? d : null;
@@ -155,48 +142,63 @@ const ImportWizard = ({ isOpen, onClose, onDataUploaded }) => {
 
           // --- MAPPING LOGIC ---
           if (uploadType === 'funnel') { 
-            // ListofOpportunities__EN.csv (MM-DD-YYYY)
-            // Header: "Created On" -> 11-05-2025
+            // ListofOpportunities__EN.csv
+            // ID: ID or Order Number
             item.id = row['id'] || row['ordernumber'] || item.id;
             
-            // Explicit MM-DD-YYYY handling for this file type
+            // Date: Created On (MM-DD-YYYY HH:mm)
+            // Manual parse to ensure 11-05 is Nov 5
             const dateRaw = row['createdon'];
             if(dateRaw) {
-               const parts = dateRaw.split(' ')[0].split('-');
-               if(parts.length===3) item.date = new Date(parts[2], parts[0]-1, parts[1]).toISOString().split('T')[0];
+               const datePart = dateRaw.split(' ')[0];
+               const parts = datePart.split('-');
+               if(parts.length===3) {
+                 // Assuming MM-DD-YYYY based on your description
+                 item.date = new Date(parts[2], parts[0]-1, parts[1]).toISOString().split('T')[0];
+               }
             }
 
-            item.model = row['modellinefe'] || row['modelline'];
-            item.location = row['dealercode'] || row['dealername'] || 'Unknown';
+            // Executive Tracking: Assigned To
             item.consultant = row['assignedto'];
+            
+            item.model = row['modellinefe'];
+            item.location = row['dealercode'] || row['dealername'];
             
             const td = row['testdrivecompleted'] || '';
             item.is_test_drive = td.toLowerCase().includes('yes') || td.toLowerCase().includes('done');
             
             const score = row['opportunityofflinescore'] || row['zqualificationlevel'] || '';
             item.is_hot = score.toLowerCase().includes('hot') || parseInt(score) > 80;
+            
+            // Customer Matching Keys for later
+            item.customer_name = row['customer'] || row['firstmiddlename']; 
           } 
           else if (uploadType === 'source') {
-            // ListofLeadsCreatedinMarketing__EN.csv (MM-DD-YYYY)
+            // ListofLeadsCreatedinMarketing__EN.csv
             item.id = row['leadid'] || item.id;
             
+            // Date: Created On (MM-DD-YYYY hh:mm AM/PM)
             const dateRaw = row['createdon'];
             if(dateRaw) {
-               const parts = dateRaw.split(' ')[0].split('-');
-               if(parts.length===3) item.date = new Date(parts[2], parts[0]-1, parts[1]).toISOString().split('T')[0];
+               const datePart = dateRaw.split(' ')[0];
+               const parts = datePart.split('-');
+               if(parts.length===3) {
+                 item.date = new Date(parts[2], parts[0]-1, parts[1]).toISOString().split('T')[0];
+               }
             }
 
             item.model = row['modellinefe'];
-            item.location = row['city'] || 'Unknown';
+            item.location = row['city'];
             item.consultant = row['owner'];
             item.source = row['source'];
             item.stage = row['qualificationlevel'];
           }
           else if (uploadType === 'booking') {
-            // EXPORT- Booking to delivery data.csv (DD-MM-YYYY likely)
+            // EXPORT- Booking to delivery data.csv
             item.id = row['salesordernumber'] || row['dbmorder'] || item.id;
             
-            // Parse Document Date (03-11-2025 -> DD-MM-YYYY)
+            // Date: Document Date (DD-MM-YYYY)
+            // Retail Date: Invoice Date (DD-MM-YYYY)
             const parseDDMM = (dStr) => {
                 if(!dStr) return null;
                 const parts = dStr.split('-');
@@ -209,12 +211,16 @@ const ImportWizard = ({ isOpen, onClose, onDataUploaded }) => {
             
             item.model = row['modelsalescode'] || row['modelline'] || row['model'];
             item.location = row['dealercode'];
+            item.consultant = row['employeename'] || row['salesconsultant']; // Check headers for employee name
+            item.customer_name = row['customername']; // For matching
+            
             item.stage = item.retail_date ? 'Retail' : 'Booking';
           }
           else if (uploadType === 'inventory') {
-            // EXPORT Inventory.csv (DD-MM-YYYY)
+            // EXPORT Inventory.csv
             item.id = row['vehicleidentificationnumber'] || row['vin'] || item.id;
             
+            // Date: GRN Date (DD-MM-YYYY)
             const parseDDMM = (dStr) => {
                 if(!dStr) return null;
                 const parts = dStr.split('-');
@@ -403,11 +409,15 @@ export default function App() {
 
   // 1. Sales Funnel Stats
   const getFunnelStats = (month) => {
+    // Opportunities
     const inquiries = funnelData.filter(d => d.month === month).length;
     const testDrives = funnelData.filter(d => d.month === month && d.is_test_drive).length;
     const hotLeads = funnelData.filter(d => d.month === month && d.is_hot).length;
     
+    // Booking & Retail Logic (Matching Customer Name/Model if needed, but aggregating by Consultant/Month is robust)
+    // Booking Date Match
     const bookings = bookingData.filter(d => d.month === month).length;
+    // Retail Date Match
     const retails = bookingData.filter(d => d.retail_date && d.retail_date.startsWith(month)).length;
 
     return { inquiries, testDrives, hotLeads, bookings, retails };
