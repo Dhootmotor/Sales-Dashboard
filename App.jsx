@@ -63,8 +63,7 @@ const parseCSV = (text) => {
   }
 
   const headers = parseLine(lines[headerIndex]).map(normalizeKey);
-  console.log("Detected Headers:", headers); 
-
+  
   return lines.slice(headerIndex + 1).map((line) => {
     const values = parseLine(line);
     const row = {};
@@ -77,9 +76,14 @@ const parseDate = (dateStr) => {
   if (!dateStr) return null;
   try {
     const cleanStr = dateStr.trim();
+    // 1. MM-DD-YYYY HH:mm (e.g. 11-05-2025 15:21) - Opportunities
+    // 2. MM-DD-YYYY hh:mm AM/PM (e.g. 11-26-2025 11:36 AM) - Leads
+    // 3. DD-MM-YYYY (e.g. 20-01-2024) - Inventory
+    // 4. DD-MM-YYYY (e.g. 03-11-2025) - Booking
+
+    let d = null;
     const datePart = cleanStr.split(/[\s,]+/)[0];
     const parts = datePart.split(/[-/.]/); 
-    let d = null;
 
     if (parts.length === 3) {
        const p1 = parseInt(parts[0]);
@@ -87,16 +91,28 @@ const parseDate = (dateStr) => {
        const p3 = parseInt(parts[2]);
 
        if (p3 > 2000) { 
-          // Heuristics for XX-XX-YYYY
-          if (p1 > 12) d = new Date(p3, p2 - 1, p1); // DD-MM-YYYY
-          else if (p2 > 12) d = new Date(p3, p1 - 1, p2); // MM-DD-YYYY
-          else d = new Date(p3, p1 - 1, p2); // Default MM-DD-YYYY
+          // Check for DD-MM-YYYY (Inventory/Booking)
+          if (p1 > 12) {
+             d = new Date(p3, p2 - 1, p1); 
+          }
+          // Check for MM-DD-YYYY (Opportunities/Leads)
+          else if (p2 > 12) {
+             d = new Date(p3, p1 - 1, p2);
+          }
+          // Ambiguous cases (e.g. 11-05-2025)
+          else {
+             // Defaulting to MM-DD-YYYY for Opportunities/Leads compatibility
+             d = new Date(p3, p1 - 1, p2);
+          }
        } else if (p1 > 2000) { 
-          d = new Date(p1, p2 - 1, p3); // YYYY-MM-DD
+          d = new Date(p1, p2 - 1, p3);
        }
     }
 
-    if (!d || isNaN(d.getTime())) d = new Date(dateStr); 
+    if (!d || isNaN(d.getTime())) {
+       d = new Date(dateStr); 
+    }
+
     return (!isNaN(d.getTime()) && d.getFullYear() > 2000) ? d : null;
   } catch (e) { return null; }
 };
@@ -130,7 +146,7 @@ const ImportWizard = ({ isOpen, onClose, onDataUploaded }) => {
 
           // --- MAPPING LOGIC ---
           if (uploadType === 'funnel') { 
-            // ListofOpportunities__EN.csv
+            // ListofOpportunities__EN.csv (MM-DD-YYYY)
             item.id = row['id'] || row['ordernumber'] || item.id;
             
             // Format Specific Fix for Opportunities: 11-05-2025 (MM-DD-YYYY)
@@ -151,14 +167,15 @@ const ImportWizard = ({ isOpen, onClose, onDataUploaded }) => {
             
             const score = row['opportunityofflinescore'] || row['zqualificationlevel'] || '';
             item.is_hot = score.toLowerCase().includes('hot') || parseInt(score) > 80;
+            
+            item.customer_name = row['customer'] || row['firstmiddlename']; 
           } 
           else if (uploadType === 'source') {
-            // ListofLeadsCreatedinMarketing__EN.csv
+            // ListofLeadsCreatedinMarketing__EN.csv (MM-DD-YYYY)
             item.id = row['leadid'] || item.id;
             
             const dateRaw = row['createdon'];
             if(dateRaw) {
-               // Assuming MM-DD-YYYY
                const parts = dateRaw.split(' ')[0].split('-');
                if(parts.length===3) item.date = new Date(parts[2], parts[0]-1, parts[1]).toISOString().split('T')[0];
             } else {
@@ -172,14 +189,15 @@ const ImportWizard = ({ isOpen, onClose, onDataUploaded }) => {
             item.stage = row['qualificationlevel'];
           }
           else if (uploadType === 'booking') {
-            // EXPORT- Booking to delivery data.csv
+            // EXPORT- Booking to delivery data.csv (DD-MM-YYYY)
             item.id = row['salesordernumber'] || row['dbmorder'] || item.id;
             
             const parseDDMM = (dStr) => {
                 if(!dStr) return null;
                 const parts = dStr.split('-'); 
                 if(parts.length===3) return new Date(parts[2], parts[1]-1, parts[0]).toISOString().split('T')[0];
-                return parseDate(dStr)?.toISOString().split('T')[0];
+                const fallback = parseDate(dStr);
+                return fallback ? fallback.toISOString().split('T')[0] : null;
             }
             
             item.date = parseDDMM(row['documentdate'] || row['bookingdate']);
@@ -188,11 +206,12 @@ const ImportWizard = ({ isOpen, onClose, onDataUploaded }) => {
             item.model = row['modelsalescode'] || row['modelline'] || row['model'];
             item.location = row['dealercode'];
             item.consultant = row['employeename'] || row['salesconsultant']; 
+            item.customer_name = row['customername']; 
             
             item.stage = item.retail_date ? 'Retail' : 'Booking';
           }
           else if (uploadType === 'inventory') {
-            // EXPORT Inventory.csv
+            // EXPORT Inventory.csv (DD-MM-YYYY)
             item.id = row['vehicleidentificationnumber'] || row['vin'] || item.id;
             
             const parseDDMM = (dStr) => {
@@ -383,6 +402,7 @@ export default function App() {
 
   // 1. Sales Funnel Stats
   const getFunnelStats = (month) => {
+    // Opportunities
     const inquiries = funnelData.filter(d => d.month === month).length;
     const testDrives = funnelData.filter(d => d.month === month && d.is_test_drive).length;
     const hotLeads = funnelData.filter(d => d.month === month && d.is_hot).length;
