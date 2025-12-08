@@ -1,10 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell, Legend
-} from 'recharts';
-import { 
   LayoutDashboard, Upload, Filter, TrendingUp, Users, MapPin, Car, DollarSign, 
-  FileSpreadsheet, ArrowUpRight, ArrowDownRight, Clock, CheckCircle, X, Search, Layers, Activity
+  FileSpreadsheet, ArrowUpRight, ArrowDownRight, Clock, CheckCircle, X
 } from 'lucide-react';
 
 // --- SUPABASE CONFIGURATION ---
@@ -63,34 +60,31 @@ const parseCSV = (text) => {
 const parseDate = (dateStr) => {
   if (!dateStr) return null;
   try {
-    // Attempt standard Date parse first
-    let d = new Date(dateStr);
-    
-    // If Invalid or weird year (like 1970 for empty), try manual parsing
-    if (isNaN(d.getTime()) || d.getFullYear() < 2020) {
-       // Look for patterns like DD-MM-YYYY or MM/DD/YYYY
-       // We'll strip time parts first if present
-       const cleanStr = dateStr.split(' ')[0]; 
-       const parts = cleanStr.split(/[-/]/); 
-       
-       if (parts.length === 3) {
-         // Assume DD-MM-YYYY first (common in non-US CSVs)
-         // parts[0] = Day, parts[1] = Month, parts[2] = Year
-         const day = parseInt(parts[0]);
-         const month = parseInt(parts[1]);
-         const year = parseInt(parts[2]); // Handle 2-digit years if needed, mostly 4 digit
+    // Handle "11-26-2025" or "11-26-2025 04:59 PM" (MM-DD-YYYY format)
+    // Clean time part first
+    const cleanStr = dateStr.split(' ')[0]; 
+    const parts = cleanStr.split(/[-/]/); 
+    let d = null;
 
-         // Valid month check (1-12)
-         if (month > 0 && month <= 12 && day > 0 && day <= 31) {
-            d = new Date(year, month - 1, day);
-         } else {
-            // Fallback to MM-DD-YYYY
-            d = new Date(year, day - 1, month);
-         }
-       }
+    if (parts.length === 3) {
+        // Try MM-DD-YYYY (US Format - Common in your files like ListofOpportunities)
+        const p1 = parseInt(parts[0]);
+        const p2 = parseInt(parts[1]);
+        const p3 = parseInt(parts[2]); // Year
+
+        // Check if p1 is likely Month (1-12) and p2 is Day (1-31)
+        if (p1 <= 12 && p2 <= 31) {
+            d = new Date(p3, p1 - 1, p2); // MM-DD-YYYY
+        } else if (p2 <= 12 && p1 <= 31) {
+            d = new Date(p3, p2 - 1, p1); // DD-MM-YYYY fallback
+        }
+    }
+
+    // Fallback to standard parser
+    if (!d || isNaN(d.getTime())) {
+        d = new Date(dateStr);
     }
     
-    // Final Validity Check
     return (!isNaN(d.getTime()) && d.getFullYear() > 2020) ? d : null;
   } catch (e) { return null; }
 };
@@ -117,7 +111,6 @@ const ImportWizard = ({ isOpen, onClose, onDataUploaded }) => {
           let item = { 
             id: `gen-${Math.random().toString(36).substr(2, 9)}`, 
             dataset_type: uploadType,
-            // Defaults
             is_test_drive: false, 
             is_hot: false,
             ageing: 0
@@ -207,10 +200,10 @@ const ImportWizard = ({ isOpen, onClose, onDataUploaded }) => {
           <label className="block text-sm font-bold text-slate-700">1. What file is this?</label>
           <div className="grid grid-cols-2 gap-3">
             {[
-              { id: 'funnel', label: 'Opportunities', sub: 'Inquiries, TDs', icon: LayoutDashboard, color: 'blue' },
-              { id: 'source', label: 'Marketing Leads', sub: 'Lead Sources', icon: TrendingUp, color: 'emerald' },
-              { id: 'booking', label: 'Booking/Retail', sub: 'Conversions', icon: DollarSign, color: 'violet' },
-              { id: 'inventory', label: 'Inventory', sub: 'Stock, Ageing', icon: Car, color: 'orange' }
+              { id: 'funnel', label: 'Opportunities', sub: 'ListofOpportunities.csv', icon: LayoutDashboard, color: 'blue' },
+              { id: 'source', label: 'Marketing Leads', sub: 'ListofLeads.csv', icon: TrendingUp, color: 'emerald' },
+              { id: 'booking', label: 'Booking/Retail', sub: 'Booking-Delivery.csv', icon: DollarSign, color: 'violet' },
+              { id: 'inventory', label: 'Inventory', sub: 'EXPORT Inventory.csv', icon: Car, color: 'orange' }
             ].map((type) => (
               <button 
                 key={type.id}
@@ -300,12 +293,16 @@ export default function App() {
       setRawData(data || []);
       if(data?.length) {
         setLastUpdated(new Date());
-        // Auto-detect latest month from data if available, to avoid showing 0s
-        const months = [...new Set(data.map(d => d.month).filter(Boolean))].sort();
-        if (months.length > 0) {
-           const latest = months[months.length - 1];
-           // Only update if our default 2025-11 is not valid for this data
-           if (latest > '2025-11') setCurrentMonth(latest);
+        // Smart Date Detection: Find the latest available month in the DB to avoid showing empty screens
+        const validMonths = [...new Set(data.map(d => d.month).filter(m => m && m.match(/^\d{4}-\d{2}$/)))].sort();
+        if (validMonths.length > 0) {
+           const latest = validMonths[validMonths.length - 1];
+           setCurrentMonth(latest);
+           // Set Prev Month Logic
+           const [y, m] = latest.split('-');
+           const prevD = new Date(y, m - 2, 1);
+           const prevStr = prevD.toISOString().slice(0, 7);
+           setPrevMonth(prevStr);
         }
       }
     } catch (err) { console.error(err); } finally { setLoading(false); }
@@ -352,7 +349,7 @@ export default function App() {
     { label: 'Retail Conversion', v1: prevF.retails, v2: currF.retails, sub2: currF.bookings ? Math.round(currF.retails/currF.bookings*100)+'%' : '' },
   ];
 
-  // 2. Inventory Stats (Snapshot)
+  // 2. Inventory Stats
   const invStats = {
     total: inventoryData.length,
     open: inventoryData.filter(d => d.stage?.toLowerCase().includes('free') || d.stage?.toLowerCase().includes('invoice created') || d.stage?.toLowerCase().includes('initial')).length,
@@ -381,8 +378,27 @@ export default function App() {
   // Options
   const options = (key) => [...new Set(rawData.map(d => d[key]).filter(Boolean))].sort();
 
-  // Placeholders
-  const placeholderData = [{ label: 'Data Pending', v1: 0, v2: 0 }];
+  // --- TABLES FOR OTHER TABS (With Correct Headings) ---
+  const crossSellTable = [
+    { label: 'Car Finance', v1: 0, v2: 0, sub2: '0%' },
+    { label: 'Insurance', v1: 0, v2: 0, sub2: '0%' },
+    { label: 'Exchange', v1: 0, v2: 0, sub2: '0%' },
+    { label: 'Accessories', v1: 0, v2: 0, type: 'currency' },
+  ];
+
+  const salesMgmtTable = [
+    { label: 'Bookings', v1: prevF.bookings, v2: currF.bookings },
+    { label: 'Dlr. Retail', v1: prevF.retails, v2: currF.retails },
+    { label: 'OEM Retail', v1: 0, v2: 0 },
+    { label: 'POC Sales', v1: 0, v2: 0 },
+  ];
+
+  const profitTable = [
+    { label: 'New car Margin', v1: 0, v2: 0, type: 'currency' },
+    { label: 'Margin per car', v1: 0, v2: 0 },
+    { label: 'Used cars Margin', v1: 0, v2: 0, type: 'currency' },
+    { label: 'SC Productivity', v1: 0, v2: 0 },
+  ];
 
   return (
     <div className="min-h-screen bg-slate-50/50 font-sans pb-10">
@@ -394,10 +410,13 @@ export default function App() {
            <div className="flex items-center gap-3">
              <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white"><Car className="w-5 h-5" /></div>
              <div><h1 className="text-lg font-bold text-slate-800">Sales Dashboard</h1>
-                <div className="flex items-center gap-2 text-[10px] text-slate-400"><span>Supabase Connected</span><div className={`w-2 h-2 rounded-full ${loading ? 'bg-yellow-400 animate-pulse' : 'bg-green-500'}`}></div></div>
+                <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                  <span>Data Period: {currentMonth}</span>
+                  <div className={`w-2 h-2 rounded-full ${loading ? 'bg-yellow-400 animate-pulse' : 'bg-green-500'}`}></div>
+                </div>
              </div>
            </div>
-           <button onClick={() => setShowImport(true)} className="flex items-center gap-2 bg-slate-800 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-slate-700 shadow-sm"><Upload className="w-3.5 h-3.5" /> Import Data</button>
+           <button onClick={() => setShowImport(true)} className="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-slate-800 shadow-sm"><Upload className="w-3.5 h-3.5" /> Import Data</button>
          </div>
          {successMsg && <div className="bg-emerald-50 border-b border-emerald-100 px-4 py-2 text-center text-xs font-bold text-emerald-700">{successMsg}</div>}
          
@@ -440,31 +459,31 @@ export default function App() {
              <ComparisonTable rows={sourceStats.length ? sourceStats : [{label: 'No Data', v1:0, v2:0}]} headers={['', currentMonth]} />
           </div>
 
-          {/* 4. CROSS-SELL (Placeholder) */}
+          {/* 4. CROSS-SELL */}
           <div className="rounded-lg shadow-sm border p-4 bg-white border-slate-200 hover:shadow-md transition-shadow">
              <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
                <div className="bg-purple-50 p-1.5 rounded text-purple-600"><FileSpreadsheet className="w-4 h-4" /></div>
                <h3 className="font-bold text-slate-700">Cross-Sell</h3>
              </div>
-             <ComparisonTable rows={placeholderData} headers={[prevMonth, currentMonth]} />
+             <ComparisonTable rows={crossSellTable} headers={[prevMonth, currentMonth]} />
           </div>
 
-          {/* 5. SALES MANAGEMENT (Placeholder) */}
+          {/* 5. SALES MANAGEMENT */}
           <div className="rounded-lg shadow-sm border p-4 bg-white border-slate-200 hover:shadow-md transition-shadow">
              <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
                <div className="bg-cyan-50 p-1.5 rounded text-cyan-600"><Users className="w-4 h-4" /></div>
                <h3 className="font-bold text-slate-700">Sales Management</h3>
              </div>
-             <ComparisonTable rows={placeholderData} headers={[prevMonth, currentMonth]} />
+             <ComparisonTable rows={salesMgmtTable} headers={[prevMonth, currentMonth]} />
           </div>
 
-          {/* 6. PROFIT & PRODUCTIVITY (Placeholder) */}
+          {/* 6. PROFIT & PRODUCTIVITY */}
           <div className="rounded-lg shadow-sm border p-4 bg-white border-slate-200 hover:shadow-md transition-shadow">
              <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
                <div className="bg-rose-50 p-1.5 rounded text-rose-600"><DollarSign className="w-4 h-4" /></div>
                <h3 className="font-bold text-slate-700">Profit & Productivity</h3>
              </div>
-             <ComparisonTable rows={placeholderData} headers={[prevMonth, currentMonth]} />
+             <ComparisonTable rows={profitTable} headers={[prevMonth, currentMonth]} />
           </div>
        </main>
     </div>
