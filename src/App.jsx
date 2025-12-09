@@ -1,17 +1,23 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  LayoutDashboard, Upload, Filter, TrendingUp, TrendingDown, 
-  Users, Car, DollarSign, ChevronDown, FileSpreadsheet, 
-  ArrowUpRight, ArrowDownRight, RefreshCw, X, Search, CheckCircle
+  LayoutDashboard, Upload, TrendingUp, 
+  Users, Car, DollarSign, FileSpreadsheet, 
+  ArrowUpRight, ArrowDownRight, RefreshCw, X, CheckCircle
 } from 'lucide-react';
 
 // --- SUPABASE CONFIGURATION ---
 const SUPABASE_URL = 'https://zfqjtpxetuliayhccnvw.supabase.co'; 
+// Note: This key format looks unusual for Supabase (typically starts with 'ey...'). 
+// If fetch fails with 401/403, please verify your Anon Key in Supabase Dashboard.
 const SUPABASE_ANON_KEY = 'sb_publishable_ES3a2aPouopqEu_uV9Z-Og_uPsmoYNH'; 
 
 // --- STYLES ---
 const GlobalStyles = () => (
   <style>{`
+    @tailwind base;
+    @tailwind components;
+    @tailwind utilities;
+    
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
@@ -76,7 +82,9 @@ const parseDate = (dateStr) => {
     }
     const d = new Date(dateStr);
     return !isNaN(d.getTime()) ? d : null;
-  } catch (e) { return null; }
+  } catch { 
+    return null; 
+  }
 };
 
 // --- IMPORT WIZARD ---
@@ -237,7 +245,8 @@ export default function App() {
   const [showImport, setShowImport] = useState(false);
   const [currentMonth, setCurrentMonth] = useState('2025-06');
   const [prevMonth, setPrevMonth] = useState('2025-05');
-  const [filters, setFilters] = useState({ model: 'All', location: 'All', consultant: 'All' });
+  // Removed setFilters since it was unused, avoiding lint error
+  const [filters] = useState({ model: 'All', location: 'All', consultant: 'All' });
 
   const fetchLeads = async () => {
     setLoading(true);
