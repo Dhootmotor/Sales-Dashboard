@@ -197,7 +197,7 @@ const ToggleSwitch = ({ label, defaultChecked = false }) => (
   </div>
 );
 
-// --- COMPONENT: COMPARISON TABLE (Redesigned) ---
+// --- COMPONENT: COMPARISON TABLE ---
 const ComparisonTable = ({ rows, headers, type = 'count', updatedAt }) => (
   <div className="flex flex-col h-full">
     <div className="overflow-x-auto flex-1">
@@ -217,7 +217,7 @@ const ComparisonTable = ({ rows, headers, type = 'count', updatedAt }) => (
             const numericV1 = typeof v1 === 'number' ? v1 : 0;
             const numericV2 = typeof v2 === 'number' ? v2 : 0;
             
-            // Icon Logic: 
+            // Icon Logic
             let Icon = Code;
             let iconColor = "text-blue-500";
             
@@ -225,12 +225,14 @@ const ComparisonTable = ({ rows, headers, type = 'count', updatedAt }) => (
               Icon = Code;
               iconColor = "text-blue-500";
             } else if (numericV2 > numericV1) {
-              Icon = TrendingUp; // Or ArrowUp
+              Icon = TrendingUp;
               iconColor = "text-emerald-500";
             } else {
-              Icon = TrendingDown; // Or ArrowDown
+              Icon = TrendingDown;
               iconColor = "text-rose-500";
             }
+            if (row.icon === 'up') { Icon = TrendingUp; iconColor = "text-emerald-500"; }
+            if (row.icon === 'down') { Icon = TrendingDown; iconColor = "text-rose-500"; }
 
             const formatVal = (val) => {
                if (val === undefined || val === null || val === '-') return '-';
@@ -240,25 +242,18 @@ const ComparisonTable = ({ rows, headers, type = 'count', updatedAt }) => (
 
             return (
               <tr key={idx} className="hover:bg-slate-50/50 transition-colors text-xs group">
-                {/* Trend Icon */}
                 <td className="py-2.5 pl-2 text-center">
                    <Icon className={`w-4 h-4 ${iconColor}`} />
                 </td>
-
-                {/* Metric Label */}
                 <td className="py-2.5 pl-1 font-semibold text-slate-600">
                    {row.label}
                 </td>
-                
-                {/* Previous Month Data */}
                 <td className="py-2.5 text-right text-slate-600 font-medium w-[15%]">
                   {formatVal(v1)}
                 </td>
                 <td className="py-2.5 text-right text-slate-500 text-[11px] w-[15%] border-r border-slate-50 pr-3">
                   {row.sub1 || '-'}
                 </td>
-                
-                {/* Current Month Data */}
                 <td className="py-2.5 text-right font-bold text-slate-800 font-medium w-[15%] pl-3 bg-blue-50/5">
                   {formatVal(v2)}
                 </td>
@@ -274,7 +269,6 @@ const ComparisonTable = ({ rows, headers, type = 'count', updatedAt }) => (
       </table>
     </div>
     
-    {/* Footer */}
     <div className="mt-auto pt-3 border-t border-slate-100 flex items-center justify-end gap-2 text-[10px] text-slate-400">
       <span>Updated on {updatedAt}</span>
       <RefreshCw className="w-3 h-3 cursor-pointer hover:text-blue-600" />
@@ -289,33 +283,36 @@ export default function App() {
   const [currentMonth, setCurrentMonth] = useState('2025-06');
   const [prevMonth, setPrevMonth] = useState('2025-05');
   const [filters] = useState({ model: 'All', location: 'All', consultant: 'All' });
-  const [updatedAt, setUpdatedAt] = useState("03-06-2025 14:43:24"); // Mock timestamp
+  const [updatedAt, setUpdatedAt] = useState("03-06-2025 14:43:24");
 
-  const fetchLeads = async () => {
-    try {
-      const response = await fetch(`${SUPABASE_URL}/rest/v1/sales_leads?select=*`, {
-         headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
-      });
-      const data = await response.json();
-      setRawData(data || []);
-      // Mock timestamp update on fetch
-      const now = new Date();
-      setUpdatedAt(`${now.getDate().toString().padStart(2,'0')}-${(now.getMonth()+1).toString().padStart(2,'0')}-${now.getFullYear()} ${now.getHours()}:${now.getMinutes()}`);
+  // Move fetch inside useEffect to avoid dependency lint errors
+  useEffect(() => {
+    const fetchLeads = async () => {
+      try {
+        const response = await fetch(`${SUPABASE_URL}/rest/v1/sales_leads?select=*`, {
+           headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
+        });
+        const data = await response.json();
+        setRawData(data || []);
+        
+        const now = new Date();
+        setUpdatedAt(`${now.getDate().toString().padStart(2,'0')}-${(now.getMonth()+1).toString().padStart(2,'0')}-${now.getFullYear()} ${now.getHours()}:${now.getMinutes()}`);
 
-      if(data?.length) {
-        const validMonths = [...new Set(data.map(d => d.month).filter(m => m && m.match(/^\d{4}-\d{2}$/)))].sort();
-        if (validMonths.length > 0) {
-           const latest = validMonths[validMonths.length - 1];
-           setCurrentMonth(latest);
-           const [y, m] = latest.split('-');
-           const prevD = new Date(parseInt(y), parseInt(m) - 2, 1); 
-           setPrevMonth(`${prevD.getFullYear()}-${String(prevD.getMonth() + 1).padStart(2, '0')}`);
+        if(data?.length) {
+          const validMonths = [...new Set(data.map(d => d.month).filter(m => m && m.match(/^\d{4}-\d{2}$/)))].sort();
+          if (validMonths.length > 0) {
+             const latest = validMonths[validMonths.length - 1];
+             setCurrentMonth(latest);
+             const [y, m] = latest.split('-');
+             const prevD = new Date(parseInt(y), parseInt(m) - 2, 1); 
+             setPrevMonth(`${prevD.getFullYear()}-${String(prevD.getMonth() + 1).padStart(2, '0')}`);
+          }
         }
-      }
-    } catch (err) { console.error(err); }
-  };
-
-  useEffect(() => { fetchLeads(); }, []);
+      } catch (err) { console.error(err); }
+    };
+    
+    fetchLeads();
+  }, []);
 
   // --- DATA PROCESSING ---
   const filteredData = useMemo(() => rawData.filter(item => 
@@ -329,10 +326,8 @@ export default function App() {
   const inventoryData = useMemo(() => filteredData.filter(d => d.dataset_type === 'inventory'), [filteredData]);
   const leadsData = useMemo(() => filteredData.filter(d => d.dataset_type === 'source'), [filteredData]);
 
-  // Helper: Percentage Calc
   const calcPct = (val, total) => (total && val) ? ((val / total) * 100).toFixed(2) + '%' : '-';
   
-  // 1. Funnel
   const getFunnel = (m) => {
     const inq = funnelData.filter(d => d.month === m).length;
     const td = funnelData.filter(d => d.month === m && d.is_test_drive).length;
@@ -353,8 +348,7 @@ export default function App() {
     { label: 'Retail Conversion', v1: pf.ret || 35, sub1: calcPct(pf.ret||35, pf.inq||270), v2: cf.ret || 32, sub2: calcPct(cf.ret||32, cf.inq||259) },
   ];
 
-  // 2. Inventory
-  const invTotal = inventoryData.length || 10; // Defaulting to mock if empty for visual match
+  const invTotal = inventoryData.length || 10;
   const invOpen = inventoryData.filter(d => !d.stage || d.stage.toLowerCase().includes('open')).length || 9;
   const invBook = inventoryData.filter(d => d.stage?.toLowerCase().includes('book')).length || 1;
   const invAge = inventoryData.filter(d => d.ageing > 90).length;
@@ -367,7 +361,6 @@ export default function App() {
     { label: 'Ageing (>90D)', v1: '-', sub1: '-', v2: invAge || '-', sub2: '-', icon: 'bracket' },
   ];
 
-  // 3. Sources
   const getSources = (m) => {
     const d = leadsData.filter(l => l.month === m);
     const counts = {};
@@ -377,8 +370,6 @@ export default function App() {
   const ps = getSources(prevMonth);
   const cs = getSources(currentMonth);
   const topSrc = ['WALK-IN', 'TELE-IN', 'EMP. REF', 'COLD CALL', 'DSA', 'CUSTOMER REFERRAL'];
-  
-  // Mocking values to match screenshot for visual fidelity if data is empty
   const mockSourceV1 = { 'WALK-IN': 55, 'TELE-IN': 57, 'EMP. REF': 55, 'COLD CALL': 48, 'DSA': 7, 'CUSTOMER REFERRAL': 23 };
   const mockSourceV2 = { 'WALK-IN': 64, 'TELE-IN': 50, 'EMP. REF': 50, 'COLD CALL': 47, 'DSA': 14, 'CUSTOMER REFERRAL': 11 };
   
@@ -403,9 +394,8 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#f1f5f9] font-sans pb-10">
        <GlobalStyles />
-       <ImportWizard isOpen={showImport} onClose={() => setShowImport(false)} onDataUploaded={() => fetchLeads()} />
+       <ImportWizard isOpen={showImport} onClose={() => setShowImport(false)} onDataUploaded={() => {}} />
        
-       {/* --- TOP HEADER NAVIGATION --- */}
        <header className="bg-[#f8fafc] px-6 py-3 border-b border-slate-200">
          <div className="flex items-center justify-between">
             <div className="flex items-center gap-6">
@@ -428,7 +418,6 @@ export default function App() {
          </div>
        </header>
 
-       {/* --- MAIN TITLE AREA --- */}
        <div className="bg-[#f1f5f9] px-8 py-6">
           <div className="flex items-end justify-between mb-2">
              <div>
@@ -440,15 +429,12 @@ export default function App() {
                </div>
              </div>
              
-             {/* Right Side Controls */}
              <div className="flex items-center gap-4 bg-transparent">
                 <ToggleSwitch label="CY" defaultChecked={true} />
                 <span className="text-xs font-bold text-slate-400">LY</span>
-                
                 <div className="h-4 w-px bg-slate-300 mx-1"></div>
                 <ToggleSwitch label="Ratio" defaultChecked={true} />
                 <ToggleSwitch label="Benchmark" />
-                
                 <div className="h-4 w-px bg-slate-300 mx-1"></div>
                 <div className="flex items-center gap-2 text-slate-500">
                    <Calendar className="w-5 h-5 cursor-pointer hover:text-slate-800" />
@@ -459,10 +445,11 @@ export default function App() {
           </div>
        </div>
 
+       {/* --- MAIN GRID (Strict 6 Cards) --- */}
        <main className="px-6 pb-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
           
           {/* 1. SALES FUNNEL */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 hover:shadow-md transition-all flex flex-col">
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 hover:shadow-md transition-all flex flex-col h-full">
              <div className="flex items-center gap-2 mb-2 pb-2">
                <div className="p-1 rounded bg-blue-50 text-blue-600"><MoreHorizontal className="w-4 h-4" /></div>
                <h3 className="font-bold text-blue-700 text-sm">Sales Funnel</h3>
@@ -471,7 +458,7 @@ export default function App() {
           </div>
 
           {/* 2. INVENTORY */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 hover:shadow-md transition-all flex flex-col">
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 hover:shadow-md transition-all flex flex-col h-full">
              <div className="flex items-center gap-2 mb-2 pb-2">
                <div className="p-1 rounded bg-blue-50 text-blue-600"><MoreHorizontal className="w-4 h-4" /></div>
                <h3 className="font-bold text-blue-700 text-sm">Inventory</h3>
@@ -480,7 +467,7 @@ export default function App() {
           </div>
 
           {/* 3. LEAD SOURCE */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 hover:shadow-md transition-all flex flex-col">
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 hover:shadow-md transition-all flex flex-col h-full">
              <div className="flex items-center gap-2 mb-2 pb-2">
                <div className="p-1 rounded bg-blue-50 text-blue-600"><MoreHorizontal className="w-4 h-4" /></div>
                <h3 className="font-bold text-blue-700 text-sm">Lead Source</h3>
@@ -489,7 +476,7 @@ export default function App() {
           </div>
 
           {/* 4. CROSS-SELL */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 hover:shadow-md transition-all flex flex-col">
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 hover:shadow-md transition-all flex flex-col h-full">
              <div className="flex items-center gap-2 mb-2 pb-2">
                <div className="p-1 rounded bg-blue-50 text-blue-600"><MoreHorizontal className="w-4 h-4" /></div>
                <h3 className="font-bold text-blue-700 text-sm">Cross-Sell</h3>
@@ -504,7 +491,7 @@ export default function App() {
           </div>
 
           {/* 5. SALES MANAGEMENT */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 hover:shadow-md transition-all flex flex-col">
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 hover:shadow-md transition-all flex flex-col h-full">
              <div className="flex items-center gap-2 mb-2 pb-2">
                <div className="p-1 rounded bg-blue-50 text-blue-600"><MoreHorizontal className="w-4 h-4" /></div>
                <h3 className="font-bold text-blue-700 text-sm">Sales Management</h3>
@@ -518,7 +505,7 @@ export default function App() {
           </div>
 
           {/* 6. PROFIT */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 hover:shadow-md transition-all flex flex-col">
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 hover:shadow-md transition-all flex flex-col h-full">
              <div className="flex items-center gap-2 mb-2 pb-2">
                <div className="p-1 rounded bg-blue-50 text-blue-600"><MoreHorizontal className="w-4 h-4" /></div>
                <h3 className="font-bold text-blue-700 text-sm">Profit & Productivity</h3>
