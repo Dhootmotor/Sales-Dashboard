@@ -14,10 +14,6 @@ const SUPABASE_ANON_KEY = 'sb_publishable_ES3a2aPouopqEu_uV9Z-Og_uPsmoYNH';
 // --- STYLES ---
 const GlobalStyles = () => (
   <style>{`
-    @tailwind base;
-    @tailwind components;
-    @tailwind utilities;
-    
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
@@ -82,7 +78,7 @@ const parseDate = (dateStr) => {
     }
     const d = new Date(dateStr);
     return !isNaN(d.getTime()) ? d : null;
-  } catch { 
+  } catch (e) { 
     return null; 
   }
 };
