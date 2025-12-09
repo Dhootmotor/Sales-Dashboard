@@ -285,7 +285,6 @@ const ComparisonTable = ({ rows, headers, type = 'count', updatedAt }) => (
 // --- MAIN APP ---
 export default function App() {
   const [rawData, setRawData] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [showImport, setShowImport] = useState(false);
   const [currentMonth, setCurrentMonth] = useState('2025-06');
   const [prevMonth, setPrevMonth] = useState('2025-05');
@@ -293,7 +292,6 @@ export default function App() {
   const [updatedAt, setUpdatedAt] = useState("03-06-2025 14:43:24"); // Mock timestamp
 
   const fetchLeads = async () => {
-    setLoading(true);
     try {
       const response = await fetch(`${SUPABASE_URL}/rest/v1/sales_leads?select=*`, {
          headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
@@ -314,7 +312,7 @@ export default function App() {
            setPrevMonth(`${prevD.getFullYear()}-${String(prevD.getMonth() + 1).padStart(2, '0')}`);
         }
       }
-    } catch (err) { console.error(err); } finally { setLoading(false); }
+    } catch (err) { console.error(err); }
   };
 
   useEffect(() => { fetchLeads(); }, []);
