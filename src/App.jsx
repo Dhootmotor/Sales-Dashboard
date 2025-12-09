@@ -3,7 +3,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell 
 } from 'recharts';
 import { 
-  LayoutDashboard, Upload, Filter, TrendingUp, 
+  LayoutDashboard, Upload, Filter, TrendingUp, TrendingDown, 
   Users, Car, DollarSign, ChevronDown, FileSpreadsheet, 
   ArrowUpRight, ArrowDownRight, 
   Clock, X, CheckCircle, Download
@@ -51,12 +51,9 @@ const normalizeKey = (key) => key ? key.trim().toLowerCase().replace(/[\s_().-]/
 
 // Mapping logic for critical fields
 const FIELD_MAPPINGS = {
-  // Updated: Prioritizing 'dealercode' as requested for Location Filter
   location: ['dealercode', 'dealername', 'dealerlocation', 'city', 'location', 'branch'],
-  // Updated: Prioritizing 'assignedto' as requested
   consultant: ['assignedto', 'qualifiedleadowner', 'salesconsultant', 'owner', 'executive'],
   model: ['modellinefe', 'model', 'modelgroupname', 'car'],
-  // Updated: Prioritizing 'createdon' for date
   date: ['createdon', 'date', 'createddate', 'enquirydate', 'bookingdate'],
   id: ['id', 'leadrecordid', 'enquirynumber', 'enquiryid', 'systemid'],
   mobile: ['mobile', 'mobileno', 'phone', 'contactnumber', 'customermobile'],
@@ -175,18 +172,13 @@ const ImportWizard = ({ isOpen, onClose, onDataImported }) => {
 
       const finalData = Array.from(masterMap.values()).map(item => {
         try {
-          // Robust date parsing for formats like MM-DD-YYYY or DD-MM-YYYY
-          // Using the "Created On" column logic
           let d = new Date(item.date);
           
           if (isNaN(d.getTime())) {
-             // Fallback for space separated time
              const datePart = item.date.split(' ')[0];
              const parts = datePart.split(/[-/]/);
              if (parts.length === 3) {
-                 // Try parsing as MM-DD-YYYY first (US/File format)
                  d = new Date(`${parts[0]}-${parts[1]}-${parts[2]}`);
-                 // If that failed or seems wrong (e.g. month > 12), try DD-MM-YYYY
                  if (isNaN(d.getTime()) || d.getMonth() !== parseInt(parts[0])-1) {
                      d = new Date(`${parts[1]}-${parts[0]}-${parts[2]}`);
                  }
@@ -368,22 +360,14 @@ export default function App() {
 
   // --- DATA IMPORT HANDLER ---
   const handleDataImport = (newData) => {
-    // Check mode
     if (dataMode === 'mock') {
-      // If currently using mock data, replace it entirely with the new file
       setRawData(newData);
     } else {
-      // If already in file mode, MERGE the new data with existing data
-      // This supports uploading "October" first, then "November"
       setRawData(prev => {
-        // Create map of existing items by ID to handle duplicates/updates
         const dataMap = new Map(prev.map(item => [item.id, item]));
-        
-        // Add/Update with new items
         newData.forEach(item => {
           dataMap.set(item.id, item);
         });
-        
         return Array.from(dataMap.values());
       });
     }
@@ -416,10 +400,9 @@ export default function App() {
   // Aggregation Helper
   const calcStats = (data) => {
     if (dataMode === 'file') {
-      // STRICT FILE MODE: Only count Inquiries, TDs, Hot Leads. Rest are 0.
       return {
         count: data.length,
-        inquiries: data.length, // All rows in this file are Enquiries/Leads
+        inquiries: data.length, 
         testDrives: data.filter(d => d.is_test_drive).length,
         hotLeads: data.filter(d => d.is_hot).length,
         bookings: 0,
@@ -459,7 +442,7 @@ export default function App() {
     { label: 'Retail Conversion', v1: prevStats.retail, v2: currStats.retail },
   ];
 
-  // Table 2: Inventory (Zero if file mode)
+  // Table 2: Inventory
   const inventoryData = dataMode === 'file' ? [
     { label: 'Total Inventory', v1: 0, v2: 0 },
     { label: 'Open Inventory', v1: 0, v2: 0 },
@@ -474,8 +457,7 @@ export default function App() {
     { label: 'Ageing (>90D)', v1: 0, v2: 0 },
   ];
 
-  // Table 3: Source (Zero if file mode, per user request)
-  // Although source exists in CSV, user asked to make "other tables data 0"
+  // Table 3: Source
   const sourceStats = useMemo(() => {
     if (dataMode === 'file') return [];
     
@@ -485,7 +467,7 @@ export default function App() {
     return Object.entries(sources).map(([k, v]) => ({ label: k, v2: v, sub2: ((v/total)*100).toFixed(1) + '%' }));
   }, [currData, dataMode]);
 
-  // Table 4: Cross Sell (Zero if file mode)
+  // Table 4: Cross Sell
   const crossSellData = dataMode === 'file' ? [
     { label: 'Car Finance', v1: 0, v2: 0 },
     { label: 'Insurance', v1: 0, v2: 0 },
@@ -498,7 +480,7 @@ export default function App() {
     { label: 'Accessories', v1: 585000, v2: 655000, type: 'currency' },
   ];
 
-  // Table 5: Sales Mgmt (Zero if file mode)
+  // Table 5: Sales Mgmt
   const salesMgmtData = dataMode === 'file' ? [
     { label: 'Bookings', v1: 0, v2: 0 },
     { label: 'Dlr. Retail', v1: 0, v2: 0 },
@@ -511,7 +493,7 @@ export default function App() {
     { label: 'POC Sales', v1: 12, v2: 10 },
   ];
 
-  // Table 6: Profit (Zero if file mode)
+  // Table 6: Profit
   const profitData = dataMode === 'file' ? [
     { label: 'New car Margin', v1: 0, v2: 0, type: 'currency' },
     { label: 'Margin per car', v1: 0, v2: 0 },
@@ -534,7 +516,7 @@ export default function App() {
   // --- VIEW RENDERERS ---
   const DashboardView = () => (
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 animate-fade-in">
-       {/* Card 1: Sales Funnel (UPDATED BY FILE) */}
+       {/* Card 1: Sales Funnel */}
        <div className={`rounded-lg shadow-sm border p-4 flex flex-col h-full hover:shadow-md transition-shadow cursor-pointer ${dataMode === 'file' ? 'bg-blue-50/50 border-blue-200' : 'bg-white border-slate-200'}`} onClick={() => handleMetricClick('Inquiries')}>
           <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-2">
             <div className="bg-blue-50 p-1.5 rounded text-blue-600"><LayoutDashboard className="w-4 h-4" /></div>
@@ -542,7 +524,6 @@ export default function App() {
           </div>
           <ComparisonTable rows={funnelData} headers={[prevMonth, currentMonth]} />
           
-          {/* FILE SUMMARY SECTION (NEW LOCATION - Below Table) */}
           {lastUpdated && dataMode === 'file' && (
             <div className="mt-4 pt-3 border-t border-blue-200 text-xs flex items-center justify-between text-blue-800">
               <span className="flex items-center gap-1 font-semibold">
