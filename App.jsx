@@ -1,41 +1,47 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
-  LayoutDashboard, Upload, TrendingUp, TrendingDown, Minus,
-  Car, DollarSign, FileSpreadsheet, Users, Package, 
-  Loader2, Filter, Share2, Download, Calendar
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell 
+} from 'recharts';
+import { 
+  LayoutDashboard, Upload, TrendingUp, Users, Car, DollarSign, 
+  FileSpreadsheet, ArrowUpRight, ArrowDownRight, Table as TableIcon, 
+  Package, Loader2
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
-import { parse, isValid, format, subMonths, startOfMonth, endOfMonth } from 'date-fns';
+import { parse, isValid, format } from 'date-fns';
 
 // --- SUPABASE CONFIGURATION ---
 const SUPABASE_URL = 'https://zfqjtpxetuliayhccnvw.supabase.co'; 
 const SUPABASE_ANON_KEY = 'sb_publishable_ES3a2aPouopqEu_uV9Z-Og_uPsmoYNH'; 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// --- STYLES & ANIMATIONS ---
+// --- STYLES ---
 const GlobalStyles = () => (
   <style>{`
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-    body { font-family: 'Inter', sans-serif; background-color: #f0f4f8; }
     ::-webkit-scrollbar { width: 6px; height: 6px; }
-    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-track { background: #f1f5f9; }
     ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
-    .animate-fade-in { animation: fadeIn 0.4s ease-out forwards; }
-    @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    .animate-fade-in { animation: fadeIn 0.5s ease-out forwards; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
   `}</style>
 );
 
 // --- HELPER: ROBUST CSV PARSER ---
 const parseCSVData = (allLines, headerIndex) => {
   if (allLines.length < headerIndex + 2) return [];
-  const headerLine = allLines[headerIndex].replace(/^\uFEFF/, ''); 
-  const headers = cleanHeaders(headerLine.split(','));
+
+  const headerLine = allLines[headerIndex];
+  // Remove BOM and trim
+  const cleanHeader = headerLine.replace(/^\uFEFF/, ''); 
+  const headers = cleanHeader.split(',').map(h => h.trim().replace(/"/g, '').toLowerCase());
 
   return allLines.slice(headerIndex + 1).filter(l => l.trim()).map(line => {
     const row = {};
     let current = '';
     let inQuotes = false;
     let colIndex = 0;
+    
     for (let i = 0; i < line.length; i++) {
       const char = line[i];
       if (char === '"') inQuotes = !inQuotes;
@@ -50,99 +56,112 @@ const parseCSVData = (allLines, headerIndex) => {
   });
 };
 
-const cleanHeaders = (headers) => headers.map(h => h.trim().replace(/"/g, '').toLowerCase());
-
-// --- HELPER: DATE UTILS ---
+// --- HELPER: ROBUST DATE PARSER (Uses date-fns) ---
 const safeParseDate = (dateStr) => {
   if (!dateStr) return null;
-  const cleanStr = dateStr.split(' ')[0].trim();
+  const cleanStr = dateStr.split(' ')[0].trim(); // Remove time if present
+  
+  // Try common formats
   const formats = ['MM/dd/yyyy', 'dd/MM/yyyy', 'yyyy-MM-dd', 'd/M/yyyy', 'M/d/yyyy'];
+  
   for (let fmt of formats) {
     const parsedDate = parse(cleanStr, fmt, new Date());
-    if (isValid(parsedDate)) return format(parsedDate, 'yyyy-MM-dd');
+    if (isValid(parsedDate)) {
+      return format(parsedDate, 'yyyy-MM-dd');
+    }
   }
   return null; 
 };
 
-// --- COMPONENT: STAT ROW (Matches Screenshot Grid) ---
-const StatRow = ({ icon, label, prevVal, prevPct, currVal, currPct, type = 'number', isCurrency = false }) => {
-  // Determine Trend
-  let TrendIcon = Minus;
-  let trendColor = "text-blue-400"; // Default/Neutral
-  
-  // Logic: If current > prev = Green Up, Else Red Down (Simple logic, can be inverted for 'Bad' metrics)
-  const v1 = parseFloat(String(prevVal).replace(/[^0-9.-]+/g,"")) || 0;
-  const v2 = parseFloat(String(currVal).replace(/[^0-9.-]+/g,"")) || 0;
+// --- COMPONENT: COMPARISON TABLE ---
+const ComparisonTable = ({ rows, headers, type = 'count' }) => (
+  <div className="overflow-hidden">
+    <table className="w-full text-sm text-left">
+      <thead className="text-[10px] uppercase text-slate-400 bg-white border-b border-slate-100 font-bold tracking-wider">
+        <tr>
+          <th className="py-2 pl-2">Metric</th>
+          <th className="py-2 text-right">{headers[0]}</th>
+          <th className="py-2 text-right pr-2">{headers[1]}</th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-slate-50">
+        {rows.map((row, idx) => {
+          const v1 = row.v1 || 0;
+          const v2 = row.v2 || 0;
+          const isUp = v2 >= v1;
+          
+          const fmt = (val) => {
+             if (type === 'currency') return `₹ ${(val/100000).toFixed(2)} L`;
+             return val.toLocaleString();
+          }
 
-  if (v2 > v1) { TrendIcon = TrendingUp; trendColor = "text-emerald-500"; }
-  else if (v2 < v1) { TrendIcon = TrendingDown; trendColor = "text-rose-500"; }
+          return (
+            <tr key={idx} className="hover:bg-slate-50/80 transition-colors text-xs">
+              <td className="py-2 pl-2 font-semibold text-slate-600 flex items-center gap-1.5">
+                 {isUp ? <ArrowUpRight className="w-3 h-3 text-emerald-500" /> : <ArrowDownRight className="w-3 h-3 text-rose-500" />}
+                 {row.label}
+              </td>
+              <td className="py-2 text-right text-slate-400 font-mono">
+                {fmt(v1)}
+                {row.sub1 && <span className="ml-1 text-[9px] text-slate-300">({row.sub1})</span>}
+              </td>
+              <td className="py-2 text-right font-bold text-slate-800 font-mono pr-2">
+                {fmt(v2)}
+                {row.sub2 && <span className="ml-1 text-[9px] text-blue-500 font-normal">({row.sub2})</span>}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  </div>
+);
 
-  const formatVal = (val) => {
-    if (!val && val !== 0) return '-';
-    if (isCurrency) return `₹ ${(val/100000).toFixed(2)} L`;
-    return val.toLocaleString();
+// --- COMPONENT: LEAD SOURCE TABLE ---
+const LeadSourceTable = ({ data }) => {
+  if (!data || data.length === 0) {
+    return <div className="p-4 text-center text-slate-400 text-xs">No lead data available. Upload the Marketing Leads CSV.</div>;
   }
 
   return (
-    <div className="grid grid-cols-12 gap-2 py-3 border-b border-slate-50 last:border-0 hover:bg-slate-50/50 transition-colors items-center">
-      {/* Label Section */}
-      <div className="col-span-4 flex items-center gap-2 pl-2">
-        <TrendIcon className={`w-4 h-4 ${trendColor}`} />
-        <span className="text-[11px] font-semibold text-slate-600 uppercase tracking-tight">{label}</span>
-      </div>
-
-      {/* Prev Month Data */}
-      <div className="col-span-4 flex items-center justify-end gap-2 pr-2 border-r border-slate-100">
-        <span className="text-xs text-slate-500 font-medium">{formatVal(prevVal)}</span>
-        {prevPct && <span className="text-[10px] text-slate-400 w-10 text-right">{prevPct}</span>}
-      </div>
-
-      {/* Curr Month Data */}
-      <div className="col-span-4 flex items-center justify-end gap-2 pr-2">
-        <span className="text-xs text-slate-800 font-bold">{formatVal(currVal)}</span>
-        {currPct && <span className="text-[10px] text-blue-600 font-medium w-10 text-right bg-blue-50 rounded px-1">{currPct}</span>}
-      </div>
+    <div className="overflow-x-auto max-h-[300px]">
+      <table className="w-full text-xs text-left text-slate-600 relative">
+        <thead className="text-[10px] uppercase text-slate-400 bg-slate-50 border-b border-slate-100 font-bold tracking-wider sticky top-0">
+          <tr>
+            <th className="py-2 px-3 bg-slate-50">Name</th>
+            <th className="py-2 px-3 bg-slate-50">Phone</th>
+            <th className="py-2 px-3 bg-slate-50">City</th>
+            <th className="py-2 px-3 bg-slate-50">Status</th>
+            <th className="py-2 px-3 bg-slate-50">Source</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-50 bg-white">
+          {data.slice(0, 50).map((lead, idx) => (
+            <tr key={idx} className="hover:bg-blue-50/50 transition-colors">
+              <td className="py-2 px-3 font-medium text-slate-800">{lead.name}</td>
+              <td className="py-2 px-3 font-mono text-slate-500">{lead.phone}</td>
+              <td className="py-2 px-3">{lead.city}</td>
+              <td className="py-2 px-3">
+                <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border ${
+                  lead.status?.toLowerCase().includes('hot') ? 'bg-rose-50 text-rose-700 border-rose-100' :
+                  lead.status?.toLowerCase().includes('warm') ? 'bg-orange-50 text-orange-700 border-orange-100' :
+                  'bg-blue-50 text-blue-700 border-blue-100'
+                }`}>
+                  {lead.status}
+                </span>
+              </td>
+              <td className="py-2 px-3">
+                <span className="bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded border border-slate-200">{lead.source}</span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 };
 
-// --- COMPONENT: DASHBOARD CARD ---
-const DashboardCard = ({ title, icon: Icon, prevDate, currDate, children }) => (
-  <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-full animate-fade-in">
-    {/* Header */}
-    <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-white">
-      <div className="flex items-center gap-2">
-        <div className="p-1.5 bg-blue-50 rounded text-blue-600">
-          <Icon className="w-4 h-4" />
-        </div>
-        <h3 className="font-bold text-slate-700 text-sm">{title}</h3>
-      </div>
-    </div>
-    
-    {/* Column Headers */}
-    <div className="grid grid-cols-12 gap-2 px-2 py-2 bg-slate-50/50 border-b border-slate-100 text-[10px] font-bold text-slate-500 uppercase">
-      <div className="col-span-4 pl-2"></div>
-      <div className="col-span-4 text-right pr-4">{prevDate}</div>
-      <div className="col-span-4 text-right pr-4 text-blue-600">{currDate}</div>
-    </div>
-
-    {/* Content */}
-    <div className="flex-1 p-1">
-      {children}
-    </div>
-
-    {/* Footer actions (Visual only) */}
-    <div className="px-3 py-2 border-t border-slate-50 flex justify-between items-center text-slate-300">
-      <div className="flex gap-2">
-        <Share2 className="w-3 h-3 cursor-pointer hover:text-blue-500" />
-        <Download className="w-3 h-3 cursor-pointer hover:text-blue-500" />
-      </div>
-      <span className="text-[9px] italic">Updated just now</span>
-    </div>
-  </div>
-);
-
-// --- COMPONENT: IMPORT WIZARD (Same as before, abbreviated for brevity) ---
+// --- COMPONENT: IMPORT WIZARD ---
 const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
   const [file, setFile] = useState(null);
   const [status, setStatus] = useState('idle');
@@ -157,14 +176,15 @@ const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
     reader.onload = async (e) => {
       const text = e.target.result;
       const allLines = text.split(/\r\n|\n/); 
+
       try {
         let detectedType = null;
         let headerRowIndex = -1;
 
-        // Smart Detection Logic
+        // --- SMART DETECTION ---
         for (let i = 0; i < Math.min(allLines.length, 10); i++) {
            const lineLower = allLines[i].toLowerCase();
-           if (lineLower.includes("lead id") && (lineLower.includes("qualification") || lineLower.includes("score"))) {
+           if (lineLower.includes("lead id") && (lineLower.includes("qualification level") || lineLower.includes("lead score"))) {
              detectedType = 'LEADS'; headerRowIndex = i; break;
            }
            if ((lineLower.includes("opportunity") || lineLower.includes("test drive")) && lineLower.includes("customer")) {
@@ -173,22 +193,23 @@ const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
            if (lineLower.includes("order number") || (lineLower.includes("vin") && lineLower.includes("delivery date"))) {
              detectedType = 'SALES'; headerRowIndex = i; break;
            }
-           if (lineLower.includes("ageing") && lineLower.includes("vin")) {
+           if (lineLower.includes("ageing") && lineLower.includes("status") && lineLower.includes("vin")) {
              detectedType = 'INVENTORY'; headerRowIndex = i; break;
            }
         }
 
-        if (!detectedType) throw new Error("Unknown file format.");
+        if (!detectedType) throw new Error("Unknown file format. Please check file headers.");
+
         setMessage(`Detected: ${detectedType}. Processing...`);
-        
         const data = parseCSVData(allLines, headerRowIndex);
         let payload = [];
         let tableName = '';
 
-        // Mapping Logic
         if (detectedType === 'LEADS') {
           tableName = 'leads_marketing';
-          payload = data.map(r => ({
+          payload = data.map(r => {
+            const dateStr = safeParseDate(r['created on'] || r['created date']); 
+            return {
               lead_id: r['lead id'],
               name: r['name'] || r['customer name'],
               phone: r['customer phone'] || r['mobile'],
@@ -196,78 +217,116 @@ const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
               state: r['state'],
               status: r['status'],
               source: r['source'] || 'Unknown',
-              created_on: safeParseDate(r['created on'] || r['created date']),
-              month: safeParseDate(r['created on'] || r['created date'])?.slice(0, 7)
-          })).filter(r => r.lead_id);
-        } else if (detectedType === 'OPPS') {
-            tableName = 'opportunities';
-            payload = data.map(r => ({
-                id: r['id'] || r['opportunity id'],
-                test_drive_status: r['test drive completed'] || 'No',
-                rating: r['zqualificationlevel'] || r['rating'],
-                created_on: safeParseDate(r['created on']),
-                month: safeParseDate(r['created on'])?.slice(0, 7)
-            })).filter(r => r.id);
-        } else if (detectedType === 'SALES') {
-            tableName = 'sales_register';
-            payload = data.map(r => {
-                const dDate = safeParseDate(r['delivery date']);
-                return {
-                    order_id: r['order number'] || r['vehicle id no.'] || Math.random().toString(),
-                    booking_date: safeParseDate(r['booking date']),
-                    delivery_date: dDate,
-                    finance_bank: r['financier name'],
-                    insurance_co: r['insurance company name'],
-                    month: dDate ? dDate.slice(0, 7) : null
-                };
-            }).filter(r => r.order_id);
-        } else if (detectedType === 'INVENTORY') {
-            tableName = 'inventory';
-            payload = data.map(r => ({
-                vin: r['vehicle identification number'] || r['vin'],
-                model: r['model line'] || r['model'],
-                ageing_days: parseInt(r['ageing days']) || 0,
-                status: r['primary status']
-            })).filter(r => r.vin);
+              campaign: r['campaign'],
+              model: r['model line(fe)'] || r['interested model'],
+              owner: r['owner'],
+              qualification: r['qualification level'],
+              created_on: dateStr,
+              month: dateStr ? dateStr.slice(0, 7) : null
+            };
+          }).filter(r => r.lead_id);
+        }
+        else if (detectedType === 'OPPS') {
+          tableName = 'opportunities';
+          payload = data.map(r => {
+            const dateStr = safeParseDate(r['created on']);
+            return {
+              id: r['id'] || r['opportunity id'],
+              customer: r['customer'] || r['name'],
+              status: r['status'],
+              model: r['model line(fe)'] || r['model'],
+              assigned_to: r['assigned to'],
+              test_drive_status: r['test drive completed'] || 'No',
+              rating: r['zqualificationlevel'] || r['rating'],
+              created_on: dateStr,
+              month: dateStr ? dateStr.slice(0, 7) : null
+            };
+          }).filter(r => r.id);
+        }
+        else if (detectedType === 'SALES') {
+          tableName = 'sales_register';
+          payload = data.map(r => {
+             const docDate = safeParseDate(r['document date'] || r['booking date']);
+             const deliveryDate = safeParseDate(r['delivery date']);
+             return {
+               order_id: r['order number'] || r['vehicle id no.'] || Math.random().toString(), 
+               vin: r['vehicle id no.'] || r['vin'],
+               customer: r['customer name'],
+               model: r['model sales code'] || r['model'],
+               status: r['status'],
+               booking_date: docDate, 
+               delivery_date: deliveryDate,
+               finance_bank: r['financier name'],
+               insurance_co: r['insurance company name'],
+               month: deliveryDate ? deliveryDate.slice(0, 7) : (docDate ? docDate.slice(0, 7) : null)
+             };
+          }).filter(r => r.vin || r.order_id);
+        }
+        else if (detectedType === 'INVENTORY') {
+          tableName = 'inventory';
+          payload = data.map(r => ({
+            vin: r['vehicle identification number'] || r['vin'],
+            model: r['model line'] || r['model'],
+            ageing_days: parseInt(r['ageing days']) || 0,
+            status: r['primary status'],
+            location: r['storage location']
+          })).filter(r => r.vin);
         }
 
-        if (payload.length === 0) throw new Error("No valid rows found.");
-        const { error } = await supabase.from(tableName).upsert(payload, { onConflict: tableName === 'inventory' ? 'vin' : undefined });
-        if (error) throw error;
-        
-        setStatus('success'); setMessage('Done!');
-        setTimeout(() => { onUploadComplete(); onClose(); setStatus('idle'); setFile(null); }, 1000);
+        if (payload.length === 0) throw new Error("No valid rows found. Check Date formats in CSV.");
 
-      } catch (err) { setStatus('error'); setMessage(err.message); }
+        setMessage(`Uploading ${payload.length} rows to ${tableName}...`);
+        
+        // Delete old data for this month if needed, or just upsert
+        const { error } = await supabase.from(tableName).upsert(payload, { onConflict: tableName === 'inventory' ? 'vin' : undefined });
+        
+        if (error) throw error;
+
+        setStatus('success');
+        setMessage('Success! Database Updated.');
+        setTimeout(() => { onUploadComplete(); onClose(); setStatus('idle'); setFile(null); }, 1500);
+
+      } catch (err) {
+        console.error(err);
+        setStatus('error');
+        setMessage('Error: ' + err.message);
+      }
     };
     reader.readAsText(file);
   };
 
   if (!isOpen) return null;
   return (
-    <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center backdrop-blur-sm">
-      <div className="bg-white rounded-xl p-6 w-full max-w-md shadow-2xl">
-        <h2 className="text-lg font-bold mb-4">Upload CSV</h2>
-        <div className="border-2 border-dashed border-slate-300 rounded-lg p-8 flex flex-col items-center justify-center bg-slate-50 relative">
-          <Upload className="w-8 h-8 text-slate-400 mb-2"/>
-          <p className="text-xs text-slate-500">{file ? file.name : "Click to select file"}</p>
+    <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center backdrop-blur-sm">
+      <div className="bg-white rounded-xl p-6 w-full max-w-md animate-fade-in shadow-2xl">
+        <h2 className="text-xl font-bold mb-4">Upload Report</h2>
+        <div className="border-2 border-dashed border-slate-300 rounded-lg p-8 flex flex-col items-center justify-center relative bg-slate-50 hover:bg-slate-100 transition-colors">
+          <Upload className="w-10 h-10 text-blue-500 mb-2"/>
+          <p className="text-sm text-slate-600 font-medium">{file ? file.name : "Select CSV File"}</p>
           <input type="file" accept=".csv" className="absolute inset-0 opacity-0 cursor-pointer" onChange={e => setFile(e.target.files[0])} />
         </div>
-        {status !== 'idle' && <div className={`mt-3 text-xs text-center font-bold ${status === 'error' ? 'text-red-500' : 'text-blue-500'}`}>{message}</div>}
-        <div className="mt-4 flex gap-2">
-          <button onClick={onClose} className="flex-1 py-2 rounded-lg bg-slate-100 text-xs font-bold text-slate-600">Cancel</button>
-          <button onClick={handleFileUpload} disabled={!file || status === 'processing'} className="flex-1 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold">Upload</button>
+        {status !== 'idle' && (
+           <div className={`mt-4 p-2 rounded text-sm text-center font-medium ${status === 'error' ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-600'}`}>
+             {message}
+           </div>
+        )}
+        <div className="mt-6 flex gap-2">
+          <button onClick={onClose} className="flex-1 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium transition-colors">Cancel</button>
+          <button onClick={handleFileUpload} disabled={!file || status === 'processing'} className="flex-1 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium disabled:opacity-50 transition-colors">
+             {status === 'processing' ? 'Uploading...' : 'Upload'}
+          </button>
         </div>
       </div>
     </div>
   );
 };
 
-// --- MAIN APPLICATION ---
+// --- MAIN APP ---
 export default function App() {
   const [showImport, setShowImport] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7));
   const [loading, setLoading] = useState(false);
+  const [viewMode, setViewMode] = useState('dashboard');
   
   // Data State
   const [inquiries, setInquiries] = useState({ curr: [], prev: [] });
@@ -283,6 +342,7 @@ export default function App() {
     const prevMonth = d.toISOString().slice(0, 7);
 
     try {
+      // Parallel Fetching for speed
       const [lC, lP, oC, oP, sC, sP, inv] = await Promise.all([
         supabase.from('leads_marketing').select('*').eq('month', selectedMonth),
         supabase.from('leads_marketing').select('*').eq('month', prevMonth),
@@ -297,178 +357,175 @@ export default function App() {
       setOpportunities({ curr: oC.data || [], prev: oP.data || [] });
       setSales({ curr: sC.data || [], prev: sP.data || [] });
       setInventory(inv.data || []);
-    } catch (e) { console.error(e); } 
+
+    } catch (e) { console.error("Data fetch error:", e); } 
     finally { setLoading(false); }
   }, [selectedMonth]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  // --- DASHBOARD LOGIC ---
-  const headerCurr = format(new Date(selectedMonth + "-01"), 'MMM-yy');
-  const headerPrev = format(subMonths(new Date(selectedMonth + "-01"), 1), 'MMM-yy');
+  // --- CALCULATION LOGIC ---
+  const currentMonth = selectedMonth;
+  const prevMonth = new Date(new Date(selectedMonth + "-01").setMonth(new Date(selectedMonth + "-01").getMonth() - 1)).toISOString().slice(0, 7);
 
-  const stats = useMemo(() => {
-    const calc = (c, p) => ({ v1: p?.length || 0, v2: c?.length || 0 });
-    const percent = (part, total) => total ? ((part/total)*100).toFixed(2)+'%' : '-';
+  const calcStats = (currArr, prevArr) => {
+    const v1 = prevArr ? prevArr.length : 0;
+    const v2 = currArr ? currArr.length : 0;
+    return { v1, v2 };
+  };
 
+  const dashboardData = useMemo(() => {
     // 1. SALES FUNNEL
-    const inq = calc(inquiries.curr, inquiries.prev);
-    
-    // Test Drives
-    const tdC = opportunities.curr.filter(o => o.test_drive_status?.toLowerCase().includes('yes')).length;
-    const tdP = opportunities.prev.filter(o => o.test_drive_status?.toLowerCase().includes('yes')).length;
-    
-    // Hot Leads
-    const hotC = opportunities.curr.filter(o => o.rating?.toLowerCase() === 'hot').length;
-    const hotP = opportunities.prev.filter(o => o.rating?.toLowerCase() === 'hot').length;
-    
-    // Conversions
-    const bookings = calc(sales.curr, sales.prev); // Assuming sales register has bookings
-    const retail = calc(sales.curr.filter(s => s.delivery_date), sales.prev.filter(s => s.delivery_date));
+    const oppsStats = calcStats(opportunities.curr, opportunities.prev);
+    const leadsStats = calcStats(inquiries.curr, inquiries.prev);
+    // Inquiries = Leads + Opportunities
+    const inq = { v1: oppsStats.v1 + leadsStats.v1, v2: oppsStats.v2 + leadsStats.v2 };
+
+    const tds = calcStats(opportunities.curr.filter(o => o.test_drive_status?.toLowerCase().includes('yes')), opportunities.prev.filter(o => o.test_drive_status?.toLowerCase().includes('yes')));
+    const hot = calcStats(opportunities.curr.filter(o => o.rating?.toLowerCase() === 'hot'), opportunities.prev.filter(o => o.rating?.toLowerCase() === 'hot'));
+    const booking = calcStats(sales.curr, sales.prev);
+    const retail = calcStats(sales.curr.filter(s => s.delivery_date), sales.prev.filter(s => s.delivery_date));
+
+    const salesFunnelTable = [
+      { label: 'Inquiries', ...inq },
+      { label: 'Test-drives', ...tds, sub2: inq.v2 ? Math.round((tds.v2/inq.v2)*100)+'%' : '0%' },
+      { label: 'Hot Leads', ...hot, sub2: inq.v2 ? Math.round((hot.v2/inq.v2)*100)+'%' : '0%' },
+      { label: 'Bookings', ...booking },
+      { label: 'Retail', ...retail },
+    ];
 
     // 2. INVENTORY
     const totalStock = inventory.length;
-    const openStock = inventory.filter(i => !i.status || i.status.toLowerCase().includes('free')).length;
-    const bookedStock = inventory.filter(i => i.status?.toLowerCase().includes('blocked')).length;
-    const ageing = inventory.filter(i => i.ageing_days > 90).length;
+    const ageingStock = inventory.filter(i => i.ageing_days > 60).length;
+    const inventoryTable = [
+      { label: 'Total Stock', v1: 0, v2: totalStock },
+      { label: 'Ageing > 60 Days', v1: 0, v2: ageingStock },
+    ];
 
-    // 3. LEAD SOURCES (Aggregation)
-    // Helper to group and count
-    const getSourceCounts = (data) => {
-        const map = {};
-        data.forEach(l => {
-            const s = (l.source || 'Unknown').toUpperCase();
-            map[s] = (map[s] || 0) + 1;
-        });
-        return map;
-    };
-    const srcC = getSourceCounts(inquiries.curr);
-    const srcP = getSourceCounts(inquiries.prev);
-    // Get top 5 keys from current month
-    const topSources = Object.keys(srcC).sort((a,b) => srcC[b] - srcC[a]).slice(0, 5);
-    // Add specific standard ones if missing for display consistency
-    if (!topSources.includes("WALK-IN")) topSources.push("WALK-IN");
-    if (!topSources.includes("TELE-IN")) topSources.push("TELE-IN");
-    
-    const leadSourceRows = topSources.slice(0, 5).map(key => ({
-        label: key,
-        v1: srcP[key] || 0,
-        p1: percent(srcP[key], inq.v1),
-        v2: srcC[key] || 0,
-        p2: percent(srcC[key], inq.v2)
-    }));
+    // 3. CROSS SELL
+    const fin = calcStats(sales.curr.filter(s => s.finance_bank), sales.prev.filter(s => s.finance_bank));
+    const ins = calcStats(sales.curr.filter(s => s.insurance_co), sales.prev.filter(s => s.insurance_co));
+    const crossSellTable = [
+      { label: 'Finance', ...fin, sub2: retail.v2 ? (fin.v2/retail.v2*100).toFixed(0)+'%' : '' },
+      { label: 'Insurance', ...ins, sub2: retail.v2 ? (ins.v2/retail.v2*100).toFixed(0)+'%' : '' },
+    ];
 
-    // 4. CROSS SELL
-    const fin = calc(sales.curr.filter(s => s.finance_bank), sales.prev.filter(s => s.finance_bank));
-    const ins = calc(sales.curr.filter(s => s.insurance_co), sales.prev.filter(s => s.insurance_co));
+    // 4. SALES MANAGEMENT
+    const salesMgmtTable = [
+      { label: 'Avg Discount', v1: 0, v2: 0, type: 'currency' },
+      { label: 'Cancellation', v1: 0, v2: 0 },
+    ];
 
-    return {
-        funnel: [
-            { label: 'Inquiries', v1: inq.v1, p1: '-', v2: inq.v2, p2: '-' },
-            { label: 'Test-drives', v1: tdP, p1: percent(tdP, inq.v1), v2: tdC, p2: percent(tdC, inq.v2) },
-            { label: 'Hot Leads', v1: hotP, p1: percent(hotP, inq.v1), v2: hotC, p2: percent(hotC, inq.v2) },
-            { label: 'Booking Conv', v1: bookings.v1, p1: percent(bookings.v1, inq.v1), v2: bookings.v2, p2: percent(bookings.v2, inq.v2) },
-            { label: 'Retail Conv', v1: retail.v1, p1: percent(retail.v1, inq.v1), v2: retail.v2, p2: percent(retail.v2, inq.v2) },
-        ],
-        inventory: [
-            { label: 'Total Stock', v1: totalStock, p1: '-', v2: totalStock, p2: '-' }, // Simplified for demo
-            { label: 'Open Stock', v1: openStock, p1: percent(openStock, totalStock), v2: openStock, p2: percent(openStock, totalStock) },
-            { label: 'Booked', v1: bookedStock, p1: percent(bookedStock, totalStock), v2: bookedStock, p2: percent(bookedStock, totalStock) },
-            { label: 'Ageing >90d', v1: 0, p1: '-', v2: ageing, p2: '-' },
-        ],
-        sources: leadSourceRows,
-        crossSell: [
-            { label: 'Car Finance', v1: fin.v1, p1: percent(fin.v1, retail.v1), v2: fin.v2, p2: percent(fin.v2, retail.v2) },
-            { label: 'Insurance', v1: ins.v1, p1: percent(ins.v1, retail.v1), v2: ins.v2, p2: percent(ins.v2, retail.v2) },
-        ],
-        mgmt: [
-             { label: 'Bookings', ...bookings },
-             { label: 'Retail', ...retail }
-        ]
-    };
+    return { salesFunnelTable, inventoryTable, crossSellTable, salesMgmtTable };
   }, [inquiries, opportunities, sales, inventory]);
 
+  const { salesFunnelTable, inventoryTable, crossSellTable, salesMgmtTable } = dashboardData;
+
   return (
-    <div className="min-h-screen pb-10">
+    <div className="min-h-screen bg-slate-50/50 font-sans pb-10">
        <GlobalStyles />
        <ImportWizard isOpen={showImport} onClose={() => setShowImport(false)} onUploadComplete={fetchData} />
        
-       {/* HEADER */}
-       <header className="bg-white border-b border-slate-200 sticky top-0 z-40">
-         <div className="max-w-[1600px] mx-auto px-6 h-16 flex items-center justify-between">
+       <header className="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-sm">
+         <div className="max-w-[1920px] mx-auto px-4 h-16 flex items-center justify-between">
            <div className="flex items-center gap-3">
-             <div className="w-9 h-9 bg-slate-900 rounded-lg flex items-center justify-center text-white shadow-sm">
+             <div className="w-8 h-8 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-lg flex items-center justify-center text-white shadow-sm">
                <Car className="w-5 h-5" />
              </div>
              <div>
-                <h1 className="text-xl font-bold text-slate-800 leading-none tracking-tight">Sales Dashboard - {headerCurr} vs {headerPrev}</h1>
-                <div className="flex items-center gap-2 text-[11px] font-medium text-slate-400 mt-1">
-                   Model: All • Location: All • Sales Consultant: All
+                <h1 className="text-lg font-bold text-slate-800 leading-tight">Sales Dashboard</h1>
+                <div className="flex items-center gap-2 text-[10px] font-medium text-slate-400">
+                   Showing: {currentMonth} (vs {prevMonth})
                 </div>
              </div>
            </div>
-           
-           <div className="flex items-center gap-3">
-              {loading && <Loader2 className="w-4 h-4 animate-spin text-blue-600" />}
-              <div className="flex items-center bg-slate-100 rounded-lg p-1 border border-slate-200">
-                <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} 
-                       className="bg-transparent border-none text-xs font-bold text-slate-700 focus:ring-0 py-1" />
+           <div className="flex items-center gap-4">
+              {loading && <div className="flex items-center gap-2 text-blue-600 text-xs font-bold bg-blue-50 px-3 py-1 rounded-full"><Loader2 className="w-3 h-3 animate-spin" /> Updating...</div>}
+              
+              <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200">
+                <button onClick={() => setViewMode('dashboard')} className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${viewMode === 'dashboard' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>Dashboard</button>
+                <button onClick={() => setViewMode('table')} className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${viewMode === 'table' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>Data</button>
               </div>
-              <button onClick={() => setShowImport(true)} className="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-slate-800 transition-colors">
-                <Upload className="w-3.5 h-3.5" /> Import Data
+              <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="bg-slate-100 border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-bold text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-100" />
+              <button onClick={() => setShowImport(true)} className="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-slate-700 transition-colors shadow-sm">
+                <Upload className="w-3.5 h-3.5" /> Import
               </button>
            </div>
          </div>
        </header>
 
-       {/* MAIN GRID */}
-       <main className="max-w-[1600px] mx-auto px-6 py-8">
-         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-            
-            {/* 1. SALES FUNNEL */}
-            <DashboardCard title="Sales Funnel" icon={LayoutDashboard} prevDate={headerPrev} currDate={headerCurr}>
-                {stats.funnel.map((row, i) => (
-                    <StatRow key={i} label={row.label} prevVal={row.v1} prevPct={row.p1} currVal={row.v2} currPct={row.p2} />
-                ))}
-            </DashboardCard>
+       <main className="max-w-[1920px] mx-auto px-4 py-6">
+         {/* DASHBOARD GRID */}
+         {viewMode === 'dashboard' && (
+           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 animate-fade-in">
+              
+              {/* 1. SALES FUNNEL */}
+              <div className="rounded-lg shadow-sm border p-4 bg-white border-slate-200 hover:shadow-md transition-shadow">
+                 <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
+                   <div className="bg-blue-50 p-1.5 rounded text-blue-600"><LayoutDashboard className="w-4 h-4" /></div>
+                   <h3 className="font-bold text-slate-700">Sales Funnel</h3>
+                 </div>
+                 <ComparisonTable rows={salesFunnelTable} headers={[prevMonth, currentMonth]} />
+              </div>
 
-            {/* 2. INVENTORY */}
-            <DashboardCard title="Inventory" icon={Package} prevDate={headerPrev} currDate={headerCurr}>
-                {stats.inventory.map((row, i) => (
-                    <StatRow key={i} label={row.label} prevVal={row.v1} prevPct={row.p1} currVal={row.v2} currPct={row.p2} />
-                ))}
-            </DashboardCard>
+              {/* 2. LEAD SOURCE - DETAILED TABLE */}
+              <div className="rounded-lg shadow-sm border p-4 bg-white border-slate-200 hover:shadow-md transition-shadow md:col-span-2 xl:col-span-2">
+                 <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
+                   <div className="bg-emerald-50 p-1.5 rounded text-emerald-600"><TrendingUp className="w-4 h-4" /></div>
+                   <h3 className="font-bold text-slate-700">Recent Marketing Leads</h3>
+                 </div>
+                 <LeadSourceTable data={inquiries.curr} />
+              </div>
 
-            {/* 3. LEAD SOURCE */}
-            <DashboardCard title="Lead Source" icon={TrendingUp} prevDate={headerPrev} currDate={headerCurr}>
-                 {stats.sources.length === 0 ? <div className="p-4 text-xs text-center text-slate-400">No source data</div> : 
-                    stats.sources.map((row, i) => (
-                        <StatRow key={i} label={row.label} prevVal={row.v1} prevPct={row.p1} currVal={row.v2} currPct={row.p2} />
-                    ))
-                 }
-            </DashboardCard>
+              {/* 3. INVENTORY OVERVIEW */}
+              <div className="rounded-lg shadow-sm border p-4 bg-white border-slate-200 hover:shadow-md transition-shadow">
+                 <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
+                   <div className="bg-indigo-50 p-1.5 rounded text-indigo-600"><Package className="w-4 h-4" /></div>
+                   <h3 className="font-bold text-slate-700">Inventory Overview</h3>
+                 </div>
+                 <ComparisonTable rows={inventoryTable} headers={["-", "Total"]} />
+              </div>
 
-            {/* 4. CROSS SELL */}
-            <DashboardCard title="Cross-Sell" icon={FileSpreadsheet} prevDate={headerPrev} currDate={headerCurr}>
-                 {stats.crossSell.map((row, i) => (
-                    <StatRow key={i} label={row.label} prevVal={row.v1} prevPct={row.p1} currVal={row.v2} currPct={row.p2} />
-                ))}
-            </DashboardCard>
+              {/* 4. CROSS SELL */}
+              <div className="rounded-lg shadow-sm border p-4 bg-white border-slate-200 hover:shadow-md transition-shadow">
+                 <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
+                   <div className="bg-purple-50 p-1.5 rounded text-purple-600"><FileSpreadsheet className="w-4 h-4" /></div>
+                   <h3 className="font-bold text-slate-700">Cross-Sell</h3>
+                 </div>
+                 <ComparisonTable rows={crossSellTable} headers={[prevMonth, currentMonth]} />
+              </div>
 
-            {/* 5. SALES MANAGEMENT */}
-            <DashboardCard title="Sales Management" icon={Users} prevDate={headerPrev} currDate={headerCurr}>
-                {stats.mgmt.map((row, i) => (
-                    <StatRow key={i} label={row.label} prevVal={row.v1} prevPct={row.p1} currVal={row.v2} currPct={row.p2} />
-                ))}
-            </DashboardCard>
+              {/* 5. SALES MANAGEMENT */}
+              <div className="rounded-lg shadow-sm border p-4 bg-white border-slate-200 hover:shadow-md transition-shadow">
+                 <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
+                   <div className="bg-cyan-50 p-1.5 rounded text-cyan-600"><Users className="w-4 h-4" /></div>
+                   <h3 className="font-bold text-slate-700">Sales Management</h3>
+                 </div>
+                 <ComparisonTable rows={salesMgmtTable} headers={[prevMonth, currentMonth]} />
+              </div>
 
-            {/* 6. PROFIT & PRODUCTIVITY */}
-            <DashboardCard title="Profit & Productivity" icon={DollarSign} prevDate={headerPrev} currDate={headerCurr}>
-                 <StatRow label="New Car Margin" prevVal={1265000} isCurrency currVal={840000} />
-                 <StatRow label="Used Car Margin" prevVal={130000} isCurrency currVal={0} />
-            </DashboardCard>
+              {/* 6. PROFIT & PRODUCTIVITY */}
+              <div className="rounded-lg shadow-sm border p-4 bg-white border-slate-200 hover:shadow-md transition-shadow">
+                 <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
+                   <div className="bg-rose-50 p-1.5 rounded text-rose-600"><DollarSign className="w-4 h-4" /></div>
+                   <h3 className="font-bold text-slate-700">Profit & Productivity</h3>
+                 </div>
+                 <div className="h-40 flex items-center justify-center text-slate-400 text-xs italic bg-slate-50 rounded border border-dashed border-slate-200">
+                    Metrics pending further data integration
+                 </div>
+              </div>
 
-         </div>
+           </div>
+         )}
+
+         {/* TABLE VIEW (Placeholder) */}
+         {viewMode === 'table' && (
+           <div className="bg-white rounded-lg shadow border border-slate-200 p-8 text-center text-slate-500 animate-fade-in">
+              <TableIcon className="w-12 h-12 mx-auto text-slate-300 mb-4" />
+              <h3 className="text-lg font-bold text-slate-700">Raw Data View</h3>
+              <p className="text-sm">Select a specific report to view raw rows.</p>
+           </div>
+         )}
        </main>
     </div>
   );
