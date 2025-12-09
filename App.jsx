@@ -77,7 +77,7 @@ const parseDateDDMMYYYY = (dateStr) => {
   return null;
 };
 
-// --- COMPONENT: COMPARISON TABLE ---
+// --- COMPONENT: COMPARISON TABLE (For Summary Cards) ---
 const ComparisonTable = ({ rows, headers, type = 'count' }) => (
   <div className="overflow-hidden">
     <table className="w-full text-sm text-left">
@@ -121,42 +121,44 @@ const ComparisonTable = ({ rows, headers, type = 'count' }) => (
   </div>
 );
 
-// --- COMPONENT: LEAD SOURCE TABLE ---
+// --- COMPONENT: LEAD SOURCE TABLE (Detailed View) ---
 const LeadSourceTable = ({ data }) => {
   if (!data || data.length === 0) {
-    return <div className="p-4 text-center text-slate-400 text-xs">No lead data available</div>;
+    return <div className="p-4 text-center text-slate-400 text-xs">No lead data available for the selected period.</div>;
   }
 
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-xs text-left text-slate-600">
-        <thead className="text-[10px] uppercase text-slate-400 bg-slate-50 border-b border-slate-100 font-bold tracking-wider">
+        <thead className="text-[10px] uppercase text-slate-500 bg-slate-100 border-b border-slate-200 font-bold tracking-wider">
           <tr>
-            <th className="py-2 px-3">Name</th>
-            <th className="py-2 px-3">Phone</th>
-            <th className="py-2 px-3">City</th>
-            <th className="py-2 px-3">Status</th>
-            <th className="py-2 px-3">Source</th>
-            <th className="py-2 px-3">Owner</th>
+            <th className="py-3 px-4">Name</th>
+            <th className="py-3 px-4">Phone</th>
+            <th className="py-3 px-4">City</th>
+            <th className="py-3 px-4">Status</th>
+            <th className="py-3 px-4">Source</th>
+            <th className="py-3 px-4">Owner</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-slate-50">
-          {data.slice(0, 10).map((lead, idx) => (
-            <tr key={idx} className="hover:bg-slate-50 transition-colors">
-              <td className="py-2 px-3 font-medium text-slate-800">{lead.name}</td>
-              <td className="py-2 px-3">{lead.phone}</td>
-              <td className="py-2 px-3">{lead.city}</td>
-              <td className="py-2 px-3">
-                <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
-                  lead.status?.toLowerCase().includes('hot') ? 'bg-rose-100 text-rose-700' :
-                  lead.status?.toLowerCase().includes('warm') ? 'bg-orange-100 text-orange-700' :
-                  'bg-blue-100 text-blue-700'
+        <tbody className="divide-y divide-slate-100 bg-white">
+          {data.map((lead, idx) => (
+            <tr key={idx} className="hover:bg-blue-50/50 transition-colors">
+              <td className="py-2 px-4 font-semibold text-slate-800">{lead.name}</td>
+              <td className="py-2 px-4 text-slate-500 font-mono">{lead.phone}</td>
+              <td className="py-2 px-4">{lead.city}</td>
+              <td className="py-2 px-4">
+                <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wide border ${
+                  lead.status?.toLowerCase().includes('hot') ? 'bg-rose-50 text-rose-600 border-rose-100' :
+                  lead.status?.toLowerCase().includes('warm') ? 'bg-orange-50 text-orange-600 border-orange-100' :
+                  'bg-blue-50 text-blue-600 border-blue-100'
                 }`}>
                   {lead.status}
                 </span>
               </td>
-              <td className="py-2 px-3">{lead.source}</td>
-              <td className="py-2 px-3">{lead.owner}</td>
+              <td className="py-2 px-4">
+                 <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px] border border-slate-200">{lead.source}</span>
+              </td>
+              <td className="py-2 px-4 text-slate-600">{lead.owner}</td>
             </tr>
           ))}
         </tbody>
@@ -186,8 +188,10 @@ const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
         let detectedType = null;
         let headerRowIndex = -1;
 
+        // --- SMART DETECTION: SCAN FIRST 10 LINES ---
         for (let i = 0; i < Math.min(allLines.length, 10); i++) {
            const lineLower = allLines[i].toLowerCase();
+           
            if (lineLower.includes("lead id") && lineLower.includes("qualification level")) {
              detectedType = 'LEADS'; headerRowIndex = i; break;
            }
