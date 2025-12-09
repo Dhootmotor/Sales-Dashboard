@@ -1,8 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell 
-} from 'recharts';
-import { 
   LayoutDashboard, Upload, Filter, TrendingUp, TrendingDown, 
   Users, MapPin, Car, DollarSign, ChevronDown, FileSpreadsheet, 
   ArrowUpRight, ArrowDownRight, PieChart as PieChartIcon, Table as TableIcon, 
@@ -29,15 +26,12 @@ const GlobalStyles = () => (
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658', '#8dd1e1'];
 
 // --- HELPER: ROBUST CSV PARSER ---
-// Parses CSV text starting from a specific line index
 const parseCSVData = (allLines, headerIndex) => {
-  if (allLines.length < headerIndex + 2) return []; // Need header + at least 1 row
+  if (allLines.length < headerIndex + 2) return [];
 
-  // 1. Parse Headers
   const headerLine = allLines[headerIndex];
   const headers = headerLine.split(',').map(h => h.trim().replace(/"/g, '').toLowerCase());
 
-  // 2. Parse Rows
   return allLines.slice(headerIndex + 1).filter(l => l.trim()).map(line => {
     const row = {};
     let current = '';
@@ -53,13 +47,12 @@ const parseCSVData = (allLines, headerIndex) => {
         colIndex++;
       } else current += char;
     }
-    // Push last column
     if (headers[colIndex]) row[headers[colIndex]] = current.trim().replace(/"/g, '');
     return row;
   });
 };
 
-// --- COMPONENT: COMPARISON TABLE ---
+// --- COMPONENT: COMPARISON TABLE (Restored Format) ---
 const ComparisonTable = ({ rows, headers, type = 'count' }) => (
   <div className="overflow-hidden">
     <table className="w-full text-sm text-left">
@@ -117,7 +110,6 @@ const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
     const reader = new FileReader();
     reader.onload = async (e) => {
       const text = e.target.result;
-      // Handle Windows/Unix line endings
       const allLines = text.split(/\r\n|\n/); 
 
       try {
@@ -128,29 +120,17 @@ const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
         for (let i = 0; i < Math.min(allLines.length, 10); i++) {
            const lineLower = allLines[i].toLowerCase();
            
-           // Marketing Leads Signature
            if (lineLower.includes("lead id") && lineLower.includes("qualification level")) {
-             detectedType = 'LEADS';
-             headerRowIndex = i;
-             break;
+             detectedType = 'LEADS'; headerRowIndex = i; break;
            }
-           // Opportunities Signature
            if (lineLower.includes("opportunity offline score") || (lineLower.includes("test drive completed") && lineLower.includes("order number"))) {
-             detectedType = 'OPPS';
-             headerRowIndex = i;
-             break;
+             detectedType = 'OPPS'; headerRowIndex = i; break;
            }
-           // Booking/Sales Signature
            if (lineLower.includes("dealer code") && lineLower.includes("order type")) {
-             detectedType = 'SALES';
-             headerRowIndex = i;
-             break;
+             detectedType = 'SALES'; headerRowIndex = i; break;
            }
-           // Inventory Signature
            if (lineLower.includes("ageing days") && lineLower.includes("primary status")) {
-             detectedType = 'INVENTORY';
-             headerRowIndex = i;
-             break;
+             detectedType = 'INVENTORY'; headerRowIndex = i; break;
            }
         }
 
@@ -186,7 +166,6 @@ const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
         else if (detectedType === 'SALES') {
           tableName = 'sales_register';
           payload = data.map(r => {
-             // Parse DD-MM-YYYY
              const parseDate = (d) => {
                if(!d) return null;
                const p = d.split('-'); 
@@ -275,28 +254,27 @@ export default function App() {
   // Fetch Data
   const fetchData = useCallback(async () => {
     setLoading(true);
-    // Calc previous month
     const d = new Date(selectedMonth + "-01");
     d.setMonth(d.getMonth() - 1);
     const prevMonth = d.toISOString().slice(0, 7);
 
     try {
-      // 1. Leads
+      // Fetch Leads
       const { data: lC } = await supabase.from('leads_marketing').select('*').eq('month', selectedMonth);
       const { data: lP } = await supabase.from('leads_marketing').select('*').eq('month', prevMonth);
       setInquiries({ curr: lC || [], prev: lP || [] });
 
-      // 2. Opps
+      // Fetch Opps
       const { data: oC } = await supabase.from('opportunities').select('*').eq('month', selectedMonth);
       const { data: oP } = await supabase.from('opportunities').select('*').eq('month', prevMonth);
       setOpportunities({ curr: oC || [], prev: oP || [] });
 
-      // 3. Sales
+      // Fetch Sales
       const { data: sC } = await supabase.from('sales_register').select('*').eq('month', selectedMonth);
       const { data: sP } = await supabase.from('sales_register').select('*').eq('month', prevMonth);
       setSales({ curr: sC || [], prev: sP || [] });
 
-      // 4. Inventory
+      // Fetch Inventory
       const { data: inv } = await supabase.from('inventory').select('*');
       setInventory(inv || []);
 
@@ -318,26 +296,30 @@ export default function App() {
 
   const dashboardData = useMemo(() => {
     // 1. SALES FUNNEL
-    const inq = calcStats(inquiries.curr, inquiries.prev);
+    // FIX: Sales funnel "Inquiries" now comes from Opportunities file (opportunities state), NOT Leads file.
+    const inq = calcStats(opportunities.curr, opportunities.prev);
+    
     const tds = calcStats(opportunities.curr.filter(o => o.test_drive_status?.toLowerCase().includes('yes')), opportunities.prev.filter(o => o.test_drive_status?.toLowerCase().includes('yes')));
     const hot = calcStats(opportunities.curr.filter(o => o.rating?.toLowerCase() === 'hot'), opportunities.prev.filter(o => o.rating?.toLowerCase() === 'hot'));
     const booking = calcStats(sales.curr, sales.prev);
     const retail = calcStats(sales.curr.filter(s => s.delivery_date), sales.prev.filter(s => s.delivery_date));
 
     const salesFunnelTable = [
-      { label: 'Inquiries', ...inq }, // Updates ONLY from leads_marketing (Leads File)
-      { label: 'Test-drives', ...tds, sub2: inq.v2 ? Math.round((tds.v2/inq.v2)*100)+'%' : '0%' }, // Updates ONLY from opportunities (Opps File)
-      { label: 'Hot Leads', ...hot, sub2: inq.v2 ? Math.round((hot.v2/inq.v2)*100)+'%' : '0%' }, // Updates ONLY from opportunities (Opps File)
-      { label: 'Bookings', ...booking }, // Updates ONLY from sales_register (Sales File)
-      { label: 'Retail', ...retail }, // Updates ONLY from sales_register (Sales File)
+      { label: 'Inquiries', ...inq }, // Source: Opportunities File
+      { label: 'Test-drives', ...tds, sub2: inq.v2 ? Math.round((tds.v2/inq.v2)*100)+'%' : '0%' },
+      { label: 'Hot Leads', ...hot, sub2: inq.v2 ? Math.round((hot.v2/inq.v2)*100)+'%' : '0%' },
+      { label: 'Bookings', ...booking }, // Source: Sales File
+      { label: 'Retail', ...retail }, // Source: Sales File
     ];
 
     // 2. LEAD SOURCE - Updates ONLY from leads_marketing (Leads File)
+    // We calculate total Leads strictly for percentage calc here
+    const totalLeadsCount = inquiries.curr.length;
     const sourceMap = {};
     inquiries.curr.forEach(i => { const s = i.source || 'Unknown'; sourceMap[s] = (sourceMap[s] || 0) + 1; });
-    const leadSourceTable = Object.entries(sourceMap).map(([k, v]) => ({ label: k, v1: 0, v2: v, sub2: inq.v2 ? (v/inq.v2*100).toFixed(1)+'%' : '' })).sort((a,b) => b.v2 - a.v2).slice(0, 5);
+    const leadSourceTable = Object.entries(sourceMap).map(([k, v]) => ({ label: k, v1: 0, v2: v, sub2: totalLeadsCount ? (v/totalLeadsCount*100).toFixed(1)+'%' : '' })).sort((a,b) => b.v2 - a.v2).slice(0, 5);
 
-    // 3. INVENTORY OVERVIEW - Updates ONLY from inventory (Inventory File)
+    // 3. INVENTORY OVERVIEW
     const totalStock = inventory.length;
     const ageingStock = inventory.filter(i => i.ageing_days > 60).length;
     const inventoryTable = [
@@ -345,7 +327,7 @@ export default function App() {
       { label: 'Ageing > 60 Days', v1: 0, v2: ageingStock },
     ];
 
-    // 4. CROSS SELL - Updates ONLY from sales_register (Sales File)
+    // 4. CROSS SELL
     const fin = calcStats(sales.curr.filter(s => s.finance_bank), sales.prev.filter(s => s.finance_bank));
     const ins = calcStats(sales.curr.filter(s => s.insurance_co), sales.prev.filter(s => s.insurance_co));
     const crossSellTable = [
@@ -369,7 +351,6 @@ export default function App() {
        <GlobalStyles />
        <ImportWizard isOpen={showImport} onClose={() => setShowImport(false)} onUploadComplete={fetchData} />
        
-       {/* HEADER */}
        <header className="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-sm">
          <div className="max-w-[1920px] mx-auto px-4 h-16 flex items-center justify-between">
            <div className="flex items-center gap-3">
