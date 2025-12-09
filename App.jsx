@@ -52,6 +52,27 @@ const parseCSVData = (allLines, headerIndex) => {
   });
 };
 
+// --- HELPER: DATE PARSERS ---
+const parseDateMMDDYYYY = (dateStr) => {
+  if (!dateStr) return null;
+  const datePart = dateStr.split(' ')[0]; 
+  const parts = datePart.split(/[-/]/);
+  if (parts.length === 3) {
+    return `${parts[2]}-${parts[0]}-${parts[1]}`; 
+  }
+  return null;
+};
+
+const parseDateDDMMYYYY = (dateStr) => {
+  if (!dateStr) return null;
+  const datePart = dateStr.split(' ')[0];
+  const parts = datePart.split(/[-/]/);
+  if (parts.length === 3) {
+    return `${parts[2]}-${parts[1]}-${parts[0]}`; 
+  }
+  return null;
+};
+
 // --- COMPONENT: COMPARISON TABLE ---
 const ComparisonTable = ({ rows, headers, type = 'count' }) => (
   <div className="overflow-hidden">
@@ -132,61 +153,66 @@ const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
            }
         }
 
-        if (!detectedType) {
-          throw new Error("Could not detect file type. Please check if the file is one of the supported 4 reports.");
-        }
+        if (!detectedType) throw new Error("Unknown file format. Please check file headers.");
 
-        setMessage(`Detected: ${detectedType}. Processing rows...`);
+        setMessage(`Detected: ${detectedType}. Processing...`);
         const data = parseCSVData(allLines, headerRowIndex);
         let payload = [];
         let tableName = '';
 
         if (detectedType === 'LEADS') {
           tableName = 'leads_marketing';
-          payload = data.map(r => ({
-            lead_id: r['lead id'],
-            name: r['name'],
-            status: r['status'],
-            city: r['city'],
-            model: r['model line(fe)'],
-            source: r['source'] || 'Unknown',
-            created_on: r['created on'] ? new Date(r['created on']).toISOString() : null,
-            month: r['created on'] ? new Date(r['created on']).toISOString().slice(0, 7) : null
-          })).filter(r => r.lead_id);
+          payload = data.map(r => {
+            const dateStr = parseDateMMDDYYYY(r['created on']); 
+            return {
+              lead_id: r['lead id'],
+              name: r['name'],
+              phone: r['customer phone'],
+              city: r['city'],
+              state: r['state'],
+              status: r['status'],
+              source: r['source'] || 'Unknown',
+              campaign: r['campaign'],
+              model: r['model line(fe)'],
+              owner: r['owner'],
+              qualification: r['qualification level'],
+              created_on: dateStr,
+              month: dateStr ? dateStr.slice(0, 7) : null
+            };
+          }).filter(r => r.lead_id);
         }
         else if (detectedType === 'OPPS') {
           tableName = 'opportunities';
-          payload = data.map(r => ({
-            id: r['id'],
-            customer: r['customer'],
-            status: r['status'],
-            model: r['model line(fe)'],
-            assigned_to: r['assigned to'],
-            test_drive_status: r['test drive completed'],
-            rating: r['zqualificationlevel'],
-            created_on: r['created on'] ? new Date(r['created on']).toISOString() : null,
-            month: r['created on'] ? new Date(r['created on']).toISOString().slice(0, 7) : null
-          })).filter(r => r.id);
+          payload = data.map(r => {
+            const dateStr = parseDateMMDDYYYY(r['created on']);
+            return {
+              id: r['id'],
+              customer: r['customer'],
+              status: r['status'],
+              model: r['model line(fe)'],
+              assigned_to: r['assigned to'],
+              test_drive_status: r['test drive completed'],
+              rating: r['zqualificationlevel'],
+              created_on: dateStr,
+              month: dateStr ? dateStr.slice(0, 7) : null
+            };
+          }).filter(r => r.id);
         }
         else if (detectedType === 'SALES') {
           tableName = 'sales_register';
           payload = data.map(r => {
-             const parseDate = (d) => {
-               if(!d) return null;
-               const p = d.split('-'); 
-               return (p.length === 3 && p[2].length === 4) ? `${p[2]}-${p[1]}-${p[0]}` : null;
-             };
+             const docDate = parseDateDDMMYYYY(r['document date']);
              return {
                order_id: r['order number'] || r['vehicle id no.'] || Math.random().toString(), 
                vin: r['vehicle id no.'],
                customer: r['customer name'],
                model: r['model sales code'],
                status: r['status'],
-               booking_date: parseDate(r['document date']), 
-               delivery_date: parseDate(r['delivery date']),
+               booking_date: docDate, 
+               delivery_date: parseDateDDMMYYYY(r['delivery date']),
                finance_bank: r['financier name'],
                insurance_co: r['insurance company name'],
-               month: parseDate(r['document date']) ? parseDate(r['document date']).slice(0, 7) : null
+               month: docDate ? docDate.slice(0, 7) : null
              };
           }).filter(r => r.vin || r.order_id);
         }
@@ -195,27 +221,28 @@ const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
           payload = data.map(r => ({
             vin: r['vehicle identification number'],
             model: r['model line'],
+            variant: r['variant series'],
+            color: r['color description'],
             ageing_days: parseInt(r['ageing days']) || 0,
             status: r['primary status'],
             location: r['storage location']
           })).filter(r => r.vin);
         }
 
-        if (payload.length === 0) throw new Error("File parsed but no valid rows found.");
+        if (payload.length === 0) throw new Error("No valid rows found after parsing.");
 
-        setMessage(`Uploading ${payload.length} records to ${tableName}...`);
+        setMessage(`Uploading ${payload.length} rows to ${tableName}...`);
         const { error } = await supabase.from(tableName).upsert(payload);
-        
         if (error) throw error;
 
         setStatus('success');
-        setMessage('Successfully Updated!');
+        setMessage('Success! Database Updated.');
         setTimeout(() => { onUploadComplete(); onClose(); setStatus('idle'); setFile(null); }, 1500);
 
       } catch (err) {
         console.error(err);
         setStatus('error');
-        setMessage('Error: ' + (err.message || 'Unknown upload error'));
+        setMessage('Error: ' + err.message);
       }
     };
     reader.readAsText(file);
@@ -246,6 +273,7 @@ const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
     </div>
   );
 };
+
 // --- MAIN APP ---
 export default function App() {
   const [showImport, setShowImport] = useState(false);
@@ -267,18 +295,22 @@ export default function App() {
     const prevMonth = d.toISOString().slice(0, 7);
 
     try {
+      // Fetch Leads
       const { data: lC } = await supabase.from('leads_marketing').select('*').eq('month', selectedMonth);
       const { data: lP } = await supabase.from('leads_marketing').select('*').eq('month', prevMonth);
       setInquiries({ curr: lC || [], prev: lP || [] });
 
+      // Fetch Opps
       const { data: oC } = await supabase.from('opportunities').select('*').eq('month', selectedMonth);
       const { data: oP } = await supabase.from('opportunities').select('*').eq('month', prevMonth);
       setOpportunities({ curr: oC || [], prev: oP || [] });
 
+      // Fetch Sales
       const { data: sC } = await supabase.from('sales_register').select('*').eq('month', selectedMonth);
       const { data: sP } = await supabase.from('sales_register').select('*').eq('month', prevMonth);
       setSales({ curr: sC || [], prev: sP || [] });
 
+      // Fetch Inventory
       const { data: inv } = await supabase.from('inventory').select('*');
       setInventory(inv || []);
 
@@ -300,7 +332,16 @@ export default function App() {
 
   const dashboardData = useMemo(() => {
     // 1. SALES FUNNEL
-    const inq = calcStats(opportunities.curr, opportunities.prev); // Source: Opps
+    // Inquiries = (Count from Opps File) + (Count from Leads File)
+    const oppsStats = calcStats(opportunities.curr, opportunities.prev);
+    const leadsStats = calcStats(inquiries.curr, inquiries.prev);
+    
+    // Combining counts for Inquiries row
+    const inq = {
+      v1: oppsStats.v1 + leadsStats.v1,
+      v2: oppsStats.v2 + leadsStats.v2
+    };
+
     const tds = calcStats(opportunities.curr.filter(o => o.test_drive_status?.toLowerCase().includes('yes')), opportunities.prev.filter(o => o.test_drive_status?.toLowerCase().includes('yes')));
     const hot = calcStats(opportunities.curr.filter(o => o.rating?.toLowerCase() === 'hot'), opportunities.prev.filter(o => o.rating?.toLowerCase() === 'hot'));
     const booking = calcStats(sales.curr, sales.prev);
@@ -314,13 +355,12 @@ export default function App() {
       { label: 'Retail', ...retail },
     ];
 
-    // 2. LEAD SOURCE - Source: Leads File
-    const leadsFileStats = calcStats(inquiries.curr, inquiries.prev);
+    // 2. LEAD SOURCE - Source: Leads File Only
     const sourceMap = {};
     inquiries.curr.forEach(i => { const s = i.source || 'Unknown'; sourceMap[s] = (sourceMap[s] || 0) + 1; });
-    const leadSourceTable = Object.entries(sourceMap).map(([k, v]) => ({ label: k, v1: 0, v2: v, sub2: leadsFileStats.v2 ? (v/leadsFileStats.v2*100).toFixed(1)+'%' : '' })).sort((a,b) => b.v2 - a.v2).slice(0, 5);
+    const leadSourceTable = Object.entries(sourceMap).map(([k, v]) => ({ label: k, v1: 0, v2: v, sub2: leadsStats.v2 ? (v/leadsStats.v2*100).toFixed(1)+'%' : '' })).sort((a,b) => b.v2 - a.v2).slice(0, 5);
 
-    // 3. INVENTORY OVERVIEW
+    // 3. INVENTORY
     const totalStock = inventory.length;
     const ageingStock = inventory.filter(i => i.ageing_days > 60).length;
     const inventoryTable = [
@@ -382,6 +422,8 @@ export default function App() {
          {/* DASHBOARD GRID */}
          {viewMode === 'dashboard' && (
            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 animate-fade-in">
+              
+              {/* 1. SALES FUNNEL */}
               <div className="rounded-lg shadow-sm border p-4 bg-white border-slate-200 hover:shadow-md transition-shadow">
                  <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
                    <div className="bg-blue-50 p-1.5 rounded text-blue-600"><LayoutDashboard className="w-4 h-4" /></div>
@@ -390,6 +432,7 @@ export default function App() {
                  <ComparisonTable rows={salesFunnelTable} headers={[prevMonth, currentMonth]} />
               </div>
 
+              {/* 2. LEAD SOURCE */}
               <div className="rounded-lg shadow-sm border p-4 bg-white border-slate-200 hover:shadow-md transition-shadow">
                  <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
                    <div className="bg-emerald-50 p-1.5 rounded text-emerald-600"><TrendingUp className="w-4 h-4" /></div>
@@ -398,6 +441,7 @@ export default function App() {
                  <ComparisonTable rows={leadSourceTable} headers={["-", "Curr"]} />
               </div>
 
+              {/* 3. INVENTORY OVERVIEW */}
               <div className="rounded-lg shadow-sm border p-4 bg-white border-slate-200 hover:shadow-md transition-shadow">
                  <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
                    <div className="bg-indigo-50 p-1.5 rounded text-indigo-600"><Package className="w-4 h-4" /></div>
@@ -406,6 +450,7 @@ export default function App() {
                  <ComparisonTable rows={inventoryTable} headers={["-", "Total"]} />
               </div>
 
+              {/* 4. CROSS SELL */}
               <div className="rounded-lg shadow-sm border p-4 bg-white border-slate-200 hover:shadow-md transition-shadow">
                  <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
                    <div className="bg-purple-50 p-1.5 rounded text-purple-600"><FileSpreadsheet className="w-4 h-4" /></div>
@@ -414,6 +459,7 @@ export default function App() {
                  <ComparisonTable rows={crossSellTable} headers={[prevMonth, currentMonth]} />
               </div>
 
+              {/* 5. SALES MANAGEMENT */}
               <div className="rounded-lg shadow-sm border p-4 bg-white border-slate-200 hover:shadow-md transition-shadow">
                  <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
                    <div className="bg-cyan-50 p-1.5 rounded text-cyan-600"><Users className="w-4 h-4" /></div>
@@ -422,6 +468,7 @@ export default function App() {
                  <ComparisonTable rows={salesMgmtTable} headers={[prevMonth, currentMonth]} />
               </div>
 
+              {/* 6. PROFIT & PRODUCTIVITY */}
               <div className="rounded-lg shadow-sm border p-4 bg-white border-slate-200 hover:shadow-md transition-shadow">
                  <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
                    <div className="bg-rose-50 p-1.5 rounded text-rose-600"><DollarSign className="w-4 h-4" /></div>
@@ -431,9 +478,11 @@ export default function App() {
                     Metrics pending further data integration
                  </div>
               </div>
+
            </div>
          )}
 
+         {/* TABLE VIEW (Placeholder) */}
          {viewMode === 'table' && (
            <div className="bg-white rounded-lg shadow border border-slate-200 p-8 text-center text-slate-500 animate-fade-in">
               <TableIcon className="w-12 h-12 mx-auto text-slate-300 mb-4" />
