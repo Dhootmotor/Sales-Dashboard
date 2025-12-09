@@ -52,7 +52,7 @@ const parseCSVData = (allLines, headerIndex) => {
   });
 };
 
-// --- COMPONENT: COMPARISON TABLE (Restored Format) ---
+// --- COMPONENT: COMPARISON TABLE ---
 const ComparisonTable = ({ rows, headers, type = 'count' }) => (
   <div className="overflow-hidden">
     <table className="w-full text-sm text-left">
@@ -116,10 +116,8 @@ const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
         let detectedType = null;
         let headerRowIndex = -1;
 
-        // --- STEP 1: DETECT FILE TYPE BY SCANNING FIRST 10 LINES ---
         for (let i = 0; i < Math.min(allLines.length, 10); i++) {
            const lineLower = allLines[i].toLowerCase();
-           
            if (lineLower.includes("lead id") && lineLower.includes("qualification level")) {
              detectedType = 'LEADS'; headerRowIndex = i; break;
            }
@@ -138,7 +136,6 @@ const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
           throw new Error("Could not detect file type. Please check if the file is one of the supported 4 reports.");
         }
 
-        // --- STEP 2: PARSE & UPLOAD ---
         setMessage(`Detected: ${detectedType}. Processing rows...`);
         const data = parseCSVData(allLines, headerRowIndex);
         let payload = [];
@@ -148,6 +145,10 @@ const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
           tableName = 'leads_marketing';
           payload = data.map(r => ({
             lead_id: r['lead id'],
+            name: r['name'],
+            status: r['status'],
+            city: r['city'],
+            model: r['model line(fe)'],
             source: r['source'] || 'Unknown',
             created_on: r['created on'] ? new Date(r['created on']).toISOString() : null,
             month: r['created on'] ? new Date(r['created on']).toISOString().slice(0, 7) : null
@@ -157,6 +158,10 @@ const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
           tableName = 'opportunities';
           payload = data.map(r => ({
             id: r['id'],
+            customer: r['customer'],
+            status: r['status'],
+            model: r['model line(fe)'],
+            assigned_to: r['assigned to'],
             test_drive_status: r['test drive completed'],
             rating: r['zqualificationlevel'],
             created_on: r['created on'] ? new Date(r['created on']).toISOString() : null,
@@ -174,6 +179,9 @@ const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
              return {
                order_id: r['order number'] || r['vehicle id no.'] || Math.random().toString(), 
                vin: r['vehicle id no.'],
+               customer: r['customer name'],
+               model: r['model sales code'],
+               status: r['status'],
                booking_date: parseDate(r['document date']), 
                delivery_date: parseDate(r['delivery date']),
                finance_bank: r['financier name'],
@@ -189,6 +197,7 @@ const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
             model: r['model line'],
             ageing_days: parseInt(r['ageing days']) || 0,
             status: r['primary status'],
+            location: r['storage location']
           })).filter(r => r.vin);
         }
 
@@ -237,7 +246,6 @@ const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
     </div>
   );
 };
-
 // --- MAIN APP ---
 export default function App() {
   const [showImport, setShowImport] = useState(false);
@@ -259,22 +267,18 @@ export default function App() {
     const prevMonth = d.toISOString().slice(0, 7);
 
     try {
-      // Fetch Leads
       const { data: lC } = await supabase.from('leads_marketing').select('*').eq('month', selectedMonth);
       const { data: lP } = await supabase.from('leads_marketing').select('*').eq('month', prevMonth);
       setInquiries({ curr: lC || [], prev: lP || [] });
 
-      // Fetch Opps
       const { data: oC } = await supabase.from('opportunities').select('*').eq('month', selectedMonth);
       const { data: oP } = await supabase.from('opportunities').select('*').eq('month', prevMonth);
       setOpportunities({ curr: oC || [], prev: oP || [] });
 
-      // Fetch Sales
       const { data: sC } = await supabase.from('sales_register').select('*').eq('month', selectedMonth);
       const { data: sP } = await supabase.from('sales_register').select('*').eq('month', prevMonth);
       setSales({ curr: sC || [], prev: sP || [] });
 
-      // Fetch Inventory
       const { data: inv } = await supabase.from('inventory').select('*');
       setInventory(inv || []);
 
@@ -296,28 +300,25 @@ export default function App() {
 
   const dashboardData = useMemo(() => {
     // 1. SALES FUNNEL
-    // FIX: Sales funnel "Inquiries" now comes from Opportunities file (opportunities state), NOT Leads file.
-    const inq = calcStats(opportunities.curr, opportunities.prev);
-    
+    const inq = calcStats(opportunities.curr, opportunities.prev); // Source: Opps
     const tds = calcStats(opportunities.curr.filter(o => o.test_drive_status?.toLowerCase().includes('yes')), opportunities.prev.filter(o => o.test_drive_status?.toLowerCase().includes('yes')));
     const hot = calcStats(opportunities.curr.filter(o => o.rating?.toLowerCase() === 'hot'), opportunities.prev.filter(o => o.rating?.toLowerCase() === 'hot'));
     const booking = calcStats(sales.curr, sales.prev);
     const retail = calcStats(sales.curr.filter(s => s.delivery_date), sales.prev.filter(s => s.delivery_date));
 
     const salesFunnelTable = [
-      { label: 'Inquiries', ...inq }, // Source: Opportunities File
+      { label: 'Inquiries', ...inq },
       { label: 'Test-drives', ...tds, sub2: inq.v2 ? Math.round((tds.v2/inq.v2)*100)+'%' : '0%' },
       { label: 'Hot Leads', ...hot, sub2: inq.v2 ? Math.round((hot.v2/inq.v2)*100)+'%' : '0%' },
-      { label: 'Bookings', ...booking }, // Source: Sales File
-      { label: 'Retail', ...retail }, // Source: Sales File
+      { label: 'Bookings', ...booking },
+      { label: 'Retail', ...retail },
     ];
 
-    // 2. LEAD SOURCE - Updates ONLY from leads_marketing (Leads File)
-    // We calculate total Leads strictly for percentage calc here
-    const totalLeadsCount = inquiries.curr.length;
+    // 2. LEAD SOURCE - Source: Leads File
+    const leadsFileStats = calcStats(inquiries.curr, inquiries.prev);
     const sourceMap = {};
     inquiries.curr.forEach(i => { const s = i.source || 'Unknown'; sourceMap[s] = (sourceMap[s] || 0) + 1; });
-    const leadSourceTable = Object.entries(sourceMap).map(([k, v]) => ({ label: k, v1: 0, v2: v, sub2: totalLeadsCount ? (v/totalLeadsCount*100).toFixed(1)+'%' : '' })).sort((a,b) => b.v2 - a.v2).slice(0, 5);
+    const leadSourceTable = Object.entries(sourceMap).map(([k, v]) => ({ label: k, v1: 0, v2: v, sub2: leadsFileStats.v2 ? (v/leadsFileStats.v2*100).toFixed(1)+'%' : '' })).sort((a,b) => b.v2 - a.v2).slice(0, 5);
 
     // 3. INVENTORY OVERVIEW
     const totalStock = inventory.length;
@@ -381,8 +382,6 @@ export default function App() {
          {/* DASHBOARD GRID */}
          {viewMode === 'dashboard' && (
            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 animate-fade-in">
-              
-              {/* 1. SALES FUNNEL */}
               <div className="rounded-lg shadow-sm border p-4 bg-white border-slate-200 hover:shadow-md transition-shadow">
                  <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
                    <div className="bg-blue-50 p-1.5 rounded text-blue-600"><LayoutDashboard className="w-4 h-4" /></div>
@@ -391,7 +390,6 @@ export default function App() {
                  <ComparisonTable rows={salesFunnelTable} headers={[prevMonth, currentMonth]} />
               </div>
 
-              {/* 2. LEAD SOURCE */}
               <div className="rounded-lg shadow-sm border p-4 bg-white border-slate-200 hover:shadow-md transition-shadow">
                  <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
                    <div className="bg-emerald-50 p-1.5 rounded text-emerald-600"><TrendingUp className="w-4 h-4" /></div>
@@ -400,7 +398,6 @@ export default function App() {
                  <ComparisonTable rows={leadSourceTable} headers={["-", "Curr"]} />
               </div>
 
-              {/* 3. INVENTORY OVERVIEW */}
               <div className="rounded-lg shadow-sm border p-4 bg-white border-slate-200 hover:shadow-md transition-shadow">
                  <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
                    <div className="bg-indigo-50 p-1.5 rounded text-indigo-600"><Package className="w-4 h-4" /></div>
@@ -409,7 +406,6 @@ export default function App() {
                  <ComparisonTable rows={inventoryTable} headers={["-", "Total"]} />
               </div>
 
-              {/* 4. CROSS SELL */}
               <div className="rounded-lg shadow-sm border p-4 bg-white border-slate-200 hover:shadow-md transition-shadow">
                  <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
                    <div className="bg-purple-50 p-1.5 rounded text-purple-600"><FileSpreadsheet className="w-4 h-4" /></div>
@@ -418,7 +414,6 @@ export default function App() {
                  <ComparisonTable rows={crossSellTable} headers={[prevMonth, currentMonth]} />
               </div>
 
-              {/* 5. SALES MANAGEMENT */}
               <div className="rounded-lg shadow-sm border p-4 bg-white border-slate-200 hover:shadow-md transition-shadow">
                  <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
                    <div className="bg-cyan-50 p-1.5 rounded text-cyan-600"><Users className="w-4 h-4" /></div>
@@ -427,7 +422,6 @@ export default function App() {
                  <ComparisonTable rows={salesMgmtTable} headers={[prevMonth, currentMonth]} />
               </div>
 
-              {/* 6. PROFIT & PRODUCTIVITY */}
               <div className="rounded-lg shadow-sm border p-4 bg-white border-slate-200 hover:shadow-md transition-shadow">
                  <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
                    <div className="bg-rose-50 p-1.5 rounded text-rose-600"><DollarSign className="w-4 h-4" /></div>
@@ -437,11 +431,9 @@ export default function App() {
                     Metrics pending further data integration
                  </div>
               </div>
-
            </div>
          )}
 
-         {/* TABLE VIEW (Placeholder) */}
          {viewMode === 'table' && (
            <div className="bg-white rounded-lg shadow border border-slate-200 p-8 text-center text-slate-500 animate-fade-in">
               <TableIcon className="w-12 h-12 mx-auto text-slate-300 mb-4" />
