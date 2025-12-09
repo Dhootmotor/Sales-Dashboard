@@ -30,6 +30,7 @@ const parseCSVData = (allLines, headerIndex) => {
   if (allLines.length < headerIndex + 2) return [];
 
   const headerLine = allLines[headerIndex];
+  // Parse header: split by comma, trim spaces, remove quotes, lowercase
   const headers = headerLine.split(',').map(h => h.trim().replace(/"/g, '').toLowerCase());
 
   return allLines.slice(headerIndex + 1).filter(l => l.trim()).map(line => {
@@ -47,28 +48,31 @@ const parseCSVData = (allLines, headerIndex) => {
         colIndex++;
       } else current += char;
     }
+    // Push last column
     if (headers[colIndex]) row[headers[colIndex]] = current.trim().replace(/"/g, '');
     return row;
   });
 };
 
 // --- HELPER: DATE PARSERS ---
+// Handles "11-26-2025 11:36 AM" -> YYYY-MM-DD
 const parseDateMMDDYYYY = (dateStr) => {
   if (!dateStr) return null;
-  const datePart = dateStr.split(' ')[0]; 
+  const datePart = dateStr.split(' ')[0]; // Get "11-26-2025"
   const parts = datePart.split(/[-/]/);
   if (parts.length === 3) {
-    return `${parts[2]}-${parts[0]}-${parts[1]}`; 
+    return `${parts[2]}-${parts[0]}-${parts[1]}`; // YYYY-MM-DD
   }
   return null;
 };
 
+// Handles "22-11-2025" -> YYYY-MM-DD
 const parseDateDDMMYYYY = (dateStr) => {
   if (!dateStr) return null;
   const datePart = dateStr.split(' ')[0];
   const parts = datePart.split(/[-/]/);
   if (parts.length === 3) {
-    return `${parts[2]}-${parts[1]}-${parts[0]}`; 
+    return `${parts[2]}-${parts[1]}-${parts[0]}`; // YYYY-MM-DD
   }
   return null;
 };
@@ -137,17 +141,23 @@ const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
         let detectedType = null;
         let headerRowIndex = -1;
 
+        // --- SMART DETECTION: SCAN FIRST 10 LINES ---
         for (let i = 0; i < Math.min(allLines.length, 10); i++) {
            const lineLower = allLines[i].toLowerCase();
+           
+           // Marketing Leads
            if (lineLower.includes("lead id") && lineLower.includes("qualification level")) {
              detectedType = 'LEADS'; headerRowIndex = i; break;
            }
+           // Opportunities
            if (lineLower.includes("opportunity offline score") || (lineLower.includes("test drive completed") && lineLower.includes("order number"))) {
              detectedType = 'OPPS'; headerRowIndex = i; break;
            }
+           // Sales Register
            if (lineLower.includes("dealer code") && lineLower.includes("order type")) {
              detectedType = 'SALES'; headerRowIndex = i; break;
            }
+           // Inventory
            if (lineLower.includes("ageing days") && lineLower.includes("primary status")) {
              detectedType = 'INVENTORY'; headerRowIndex = i; break;
            }
@@ -155,11 +165,12 @@ const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
 
         if (!detectedType) throw new Error("Unknown file format. Please check file headers.");
 
-        setMessage(`Detected: ${detectedType}. Processing...`);
+        setMessage(`Detected: ${detectedType}. Processing rows...`);
         const data = parseCSVData(allLines, headerRowIndex);
         let payload = [];
         let tableName = '';
 
+        // --- PARSING LOGIC ---
         if (detectedType === 'LEADS') {
           tableName = 'leads_marketing';
           payload = data.map(r => {
@@ -221,8 +232,6 @@ const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
           payload = data.map(r => ({
             vin: r['vehicle identification number'],
             model: r['model line'],
-            variant: r['variant series'],
-            color: r['color description'],
             ageing_days: parseInt(r['ageing days']) || 0,
             status: r['primary status'],
             location: r['storage location']
@@ -336,7 +345,7 @@ export default function App() {
     const oppsStats = calcStats(opportunities.curr, opportunities.prev);
     const leadsStats = calcStats(inquiries.curr, inquiries.prev);
     
-    // Combining counts for Inquiries row
+    // Combining counts as requested
     const inq = {
       v1: oppsStats.v1 + leadsStats.v1,
       v2: oppsStats.v2 + leadsStats.v2
