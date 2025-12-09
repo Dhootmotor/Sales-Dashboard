@@ -3,7 +3,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell 
 } from 'recharts';
 import { 
-  LayoutDashboard, Upload, Filter, TrendingUp, TrendingDown, 
+  LayoutDashboard, Upload, Filter, TrendingUp, 
   Users, Car, DollarSign, ChevronDown, FileSpreadsheet, 
   ArrowUpRight, ArrowDownRight, 
   Clock, X, CheckCircle, Download
