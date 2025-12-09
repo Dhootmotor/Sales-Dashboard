@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  LayoutDashboard, Upload, TrendingUp, TrendingDown,
-  Users, Car, DollarSign, FileSpreadsheet, 
-  ArrowUpRight, ArrowDownRight, RefreshCw, X, CheckCircle,
+  Upload, TrendingUp, TrendingDown,
+  Car, FileSpreadsheet, RefreshCw, X, 
   Code, Calendar, Filter, Share2, MoreHorizontal
 } from 'lucide-react';
 
@@ -85,7 +84,7 @@ const parseDate = (dateStr) => {
     }
     const d = new Date(dateStr);
     return !isNaN(d.getTime()) ? d : null;
-  } catch (e) { 
+  } catch { 
     return null; 
   }
 };
@@ -219,10 +218,6 @@ const ComparisonTable = ({ rows, headers, type = 'count', updatedAt }) => (
             const numericV2 = typeof v2 === 'number' ? v2 : 0;
             
             // Icon Logic: 
-            // If explicit type 'bracket' -> Code icon
-            // Else if v2 > v1 -> Green Up
-            // Else if v2 < v1 -> Red Down
-            // Else -> Code/Bracket
             let Icon = Code;
             let iconColor = "text-blue-500";
             
