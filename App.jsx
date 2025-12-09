@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Upload, Filter, TrendingUp, TrendingDown, 
   Users, MapPin, Car, DollarSign, ChevronDown, FileSpreadsheet, 
   ArrowUpRight, ArrowDownRight, PieChart as PieChartIcon, Table as TableIcon, 
-  Grid, Clock, RefreshCw, AlertCircle, X, CheckCircle, Search, Download, Layers
+  Grid, Clock, RefreshCw, AlertCircle, X, CheckCircle, Search, Download, Layers, Package
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
@@ -28,17 +28,17 @@ const GlobalStyles = () => (
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658', '#8dd1e1'];
 
-// --- HELPER: CSV PARSER ---
-const parseCSV = (text, skipLines = 0) => {
-  const allLines = text.split('\n');
-  const lines = allLines.slice(skipLines).filter(l => l.trim());
-  if (lines.length < 2) return [];
+// --- HELPER: ROBUST CSV PARSER ---
+// Parses CSV text starting from a specific line index
+const parseCSVData = (allLines, headerIndex) => {
+  if (allLines.length < headerIndex + 2) return []; // Need header + at least 1 row
 
-  // Parse header
-  const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, '').toLowerCase());
-  
-  // Parse rows
-  return lines.slice(1).map(line => {
+  // 1. Parse Headers
+  const headerLine = allLines[headerIndex];
+  const headers = headerLine.split(',').map(h => h.trim().replace(/"/g, '').toLowerCase());
+
+  // 2. Parse Rows
+  return allLines.slice(headerIndex + 1).filter(l => l.trim()).map(line => {
     const row = {};
     let current = '';
     let inQuotes = false;
@@ -53,12 +53,13 @@ const parseCSV = (text, skipLines = 0) => {
         colIndex++;
       } else current += char;
     }
+    // Push last column
     if (headers[colIndex]) row[headers[colIndex]] = current.trim().replace(/"/g, '');
     return row;
   });
 };
 
-// --- COMPONENT: COMPARISON TABLE (YOUR PREFERRED FORMAT) ---
+// --- COMPONENT: COMPARISON TABLE ---
 const ComparisonTable = ({ rows, headers, type = 'count' }) => (
   <div className="overflow-hidden">
     <table className="w-full text-sm text-left">
@@ -75,12 +76,6 @@ const ComparisonTable = ({ rows, headers, type = 'count' }) => (
           const v2 = row.v2 || 0;
           const isUp = v2 >= v1;
           
-          // Handle potential infinite/NaN for growth calc
-          let diff = 0;
-          if (v1 > 0) diff = ((v2 - v1) / v1) * 100;
-          else if (v2 > 0) diff = 100;
-
-          // Format value helper
           const fmt = (val) => {
              if (type === 'currency') return `₹ ${(val/100000).toFixed(2)} L`;
              return val.toLocaleString();
@@ -122,47 +117,81 @@ const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
     const reader = new FileReader();
     reader.onload = async (e) => {
       const text = e.target.result;
+      // Handle Windows/Unix line endings
+      const allLines = text.split(/\r\n|\n/); 
+
       try {
-        // --- SMART DETECTION & UPLOAD LOGIC ---
-        
-        // 1. MARKETING LEADS
-        if (text.includes("Lead ID") && text.includes("Qualification Level")) {
-          setMessage('Detected: Marketing Leads Report');
-          const data = parseCSV(text, 4);
-          const payload = data.map(r => ({
+        let detectedType = null;
+        let headerRowIndex = -1;
+
+        // --- STEP 1: DETECT FILE TYPE BY SCANNING FIRST 10 LINES ---
+        for (let i = 0; i < Math.min(allLines.length, 10); i++) {
+           const lineLower = allLines[i].toLowerCase();
+           
+           // Marketing Leads Signature
+           if (lineLower.includes("lead id") && lineLower.includes("qualification level")) {
+             detectedType = 'LEADS';
+             headerRowIndex = i;
+             break;
+           }
+           // Opportunities Signature
+           if (lineLower.includes("opportunity offline score") || (lineLower.includes("test drive completed") && lineLower.includes("order number"))) {
+             detectedType = 'OPPS';
+             headerRowIndex = i;
+             break;
+           }
+           // Booking/Sales Signature
+           if (lineLower.includes("dealer code") && lineLower.includes("order type")) {
+             detectedType = 'SALES';
+             headerRowIndex = i;
+             break;
+           }
+           // Inventory Signature
+           if (lineLower.includes("ageing days") && lineLower.includes("primary status")) {
+             detectedType = 'INVENTORY';
+             headerRowIndex = i;
+             break;
+           }
+        }
+
+        if (!detectedType) {
+          throw new Error("Could not detect file type. Please check if the file is one of the supported 4 reports.");
+        }
+
+        // --- STEP 2: PARSE & UPLOAD ---
+        setMessage(`Detected: ${detectedType}. Processing rows...`);
+        const data = parseCSVData(allLines, headerRowIndex);
+        let payload = [];
+        let tableName = '';
+
+        if (detectedType === 'LEADS') {
+          tableName = 'leads_marketing';
+          payload = data.map(r => ({
             lead_id: r['lead id'],
             source: r['source'] || 'Unknown',
             created_on: r['created on'] ? new Date(r['created on']).toISOString() : null,
             month: r['created on'] ? new Date(r['created on']).toISOString().slice(0, 7) : null
           })).filter(r => r.lead_id);
-          if (payload.length > 0) await supabase.from('leads_marketing').upsert(payload);
         }
-        // 2. OPPORTUNITIES
-        else if (text.includes("Opportunity offline score") || (text.includes("Test Drive Completed") && text.includes("Order Number"))) {
-          setMessage('Detected: Opportunities Report');
-          const data = parseCSV(text, 4);
-          const payload = data.map(r => ({
+        else if (detectedType === 'OPPS') {
+          tableName = 'opportunities';
+          payload = data.map(r => ({
             id: r['id'],
             test_drive_status: r['test drive completed'],
             rating: r['zqualificationlevel'],
             created_on: r['created on'] ? new Date(r['created on']).toISOString() : null,
             month: r['created on'] ? new Date(r['created on']).toISOString().slice(0, 7) : null
           })).filter(r => r.id);
-          if (payload.length > 0) await supabase.from('opportunities').upsert(payload);
         }
-        // 3. BOOKING/SALES
-        else if (text.includes("Dealer Code") && text.includes("Order Type")) {
-          setMessage('Detected: Booking & Delivery Register');
-          const data = parseCSV(text, 0);
-          const payload = data.map(r => {
+        else if (detectedType === 'SALES') {
+          tableName = 'sales_register';
+          payload = data.map(r => {
+             // Parse DD-MM-YYYY
              const parseDate = (d) => {
                if(!d) return null;
                const p = d.split('-'); 
                return (p.length === 3 && p[2].length === 4) ? `${p[2]}-${p[1]}-${p[0]}` : null;
              };
-             // Cleanup amounts (remove commas)
-             const cleanAmt = (amt) => amt ? parseFloat(amt.replace(/,/g, '')) : 0;
-
              return {
                order_id: r['order number'] || r['vehicle id no.'] || Math.random().toString(), 
                vin: r['vehicle id no.'],
@@ -173,30 +202,32 @@ const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
                month: parseDate(r['document date']) ? parseDate(r['document date']).slice(0, 7) : null
              };
           }).filter(r => r.vin || r.order_id);
-          if (payload.length > 0) await supabase.from('sales_register').upsert(payload);
         }
-        // 4. INVENTORY
-        else if (text.includes("Ageing Days") && text.includes("Primary Status")) {
-          setMessage('Detected: Inventory Report');
-          const data = parseCSV(text, 0);
-          const payload = data.map(r => ({
+        else if (detectedType === 'INVENTORY') {
+          tableName = 'inventory';
+          payload = data.map(r => ({
             vin: r['vehicle identification number'],
             model: r['model line'],
             ageing_days: parseInt(r['ageing days']) || 0,
             status: r['primary status'],
           })).filter(r => r.vin);
-          if (payload.length > 0) await supabase.from('inventory').upsert(payload);
         }
-        else { throw new Error("Unknown file format."); }
+
+        if (payload.length === 0) throw new Error("File parsed but no valid rows found.");
+
+        setMessage(`Uploading ${payload.length} records to ${tableName}...`);
+        const { error } = await supabase.from(tableName).upsert(payload);
+        
+        if (error) throw error;
 
         setStatus('success');
-        setMessage('Database updated!');
+        setMessage('Successfully Updated!');
         setTimeout(() => { onUploadComplete(); onClose(); setStatus('idle'); setFile(null); }, 1500);
 
       } catch (err) {
         console.error(err);
         setStatus('error');
-        setMessage('Upload failed: ' + err.message);
+        setMessage('Error: ' + (err.message || 'Unknown upload error'));
       }
     };
     reader.readAsText(file);
@@ -294,19 +325,19 @@ export default function App() {
     const retail = calcStats(sales.curr.filter(s => s.delivery_date), sales.prev.filter(s => s.delivery_date));
 
     const salesFunnelTable = [
-      { label: 'Inquiries', ...inq },
-      { label: 'Test-drives', ...tds, sub2: inq.v2 ? Math.round((tds.v2/inq.v2)*100)+'%' : '0%' },
-      { label: 'Hot Leads', ...hot, sub2: inq.v2 ? Math.round((hot.v2/inq.v2)*100)+'%' : '0%' },
-      { label: 'Bookings', ...booking },
-      { label: 'Retail', ...retail },
+      { label: 'Inquiries', ...inq }, // Updates ONLY from leads_marketing (Leads File)
+      { label: 'Test-drives', ...tds, sub2: inq.v2 ? Math.round((tds.v2/inq.v2)*100)+'%' : '0%' }, // Updates ONLY from opportunities (Opps File)
+      { label: 'Hot Leads', ...hot, sub2: inq.v2 ? Math.round((hot.v2/inq.v2)*100)+'%' : '0%' }, // Updates ONLY from opportunities (Opps File)
+      { label: 'Bookings', ...booking }, // Updates ONLY from sales_register (Sales File)
+      { label: 'Retail', ...retail }, // Updates ONLY from sales_register (Sales File)
     ];
 
-    // 2. LEAD SOURCE
+    // 2. LEAD SOURCE - Updates ONLY from leads_marketing (Leads File)
     const sourceMap = {};
     inquiries.curr.forEach(i => { const s = i.source || 'Unknown'; sourceMap[s] = (sourceMap[s] || 0) + 1; });
     const leadSourceTable = Object.entries(sourceMap).map(([k, v]) => ({ label: k, v1: 0, v2: v, sub2: inq.v2 ? (v/inq.v2*100).toFixed(1)+'%' : '' })).sort((a,b) => b.v2 - a.v2).slice(0, 5);
 
-    // 3. INVENTORY OVERVIEW
+    // 3. INVENTORY OVERVIEW - Updates ONLY from inventory (Inventory File)
     const totalStock = inventory.length;
     const ageingStock = inventory.filter(i => i.ageing_days > 60).length;
     const inventoryTable = [
@@ -314,7 +345,7 @@ export default function App() {
       { label: 'Ageing > 60 Days', v1: 0, v2: ageingStock },
     ];
 
-    // 4. CROSS SELL
+    // 4. CROSS SELL - Updates ONLY from sales_register (Sales File)
     const fin = calcStats(sales.curr.filter(s => s.finance_bank), sales.prev.filter(s => s.finance_bank));
     const ins = calcStats(sales.curr.filter(s => s.insurance_co), sales.prev.filter(s => s.insurance_co));
     const crossSellTable = [
@@ -322,7 +353,7 @@ export default function App() {
       { label: 'Insurance', ...ins, sub2: retail.v2 ? (ins.v2/retail.v2*100).toFixed(0)+'%' : '' },
     ];
 
-    // 5. SALES MANAGEMENT (Placeholders for now as logic is complex/requires specific CSV fields)
+    // 5. SALES MANAGEMENT
     const salesMgmtTable = [
       { label: 'Avg Discount', v1: 0, v2: 0, type: 'currency' },
       { label: 'Cancellation', v1: 0, v2: 0 },
