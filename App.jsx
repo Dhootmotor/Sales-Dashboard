@@ -3,12 +3,12 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell 
 } from 'recharts';
 import { 
-  LayoutDashboard, Upload, Filter, TrendingUp, TrendingDown, 
-  Users, MapPin, Car, DollarSign, ChevronDown, FileSpreadsheet, 
-  ArrowUpRight, ArrowDownRight, PieChart as PieChartIcon, Table as TableIcon, 
-  Grid, Clock, RefreshCw, AlertCircle, X, CheckCircle, Search, Download, Layers, Package
+  LayoutDashboard, Upload, TrendingUp, Users, Car, DollarSign, 
+  FileSpreadsheet, ArrowUpRight, ArrowDownRight, Table as TableIcon, 
+  Package, Loader2
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
+import { parse, isValid, format } from 'date-fns';
 
 // --- SUPABASE CONFIGURATION ---
 const SUPABASE_URL = 'https://zfqjtpxetuliayhccnvw.supabase.co'; 
@@ -23,17 +23,18 @@ const GlobalStyles = () => (
     ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
     .animate-fade-in { animation: fadeIn 0.5s ease-out forwards; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
   `}</style>
 );
-
-const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658', '#8dd1e1'];
 
 // --- HELPER: ROBUST CSV PARSER ---
 const parseCSVData = (allLines, headerIndex) => {
   if (allLines.length < headerIndex + 2) return [];
 
   const headerLine = allLines[headerIndex];
-  const headers = headerLine.split(',').map(h => h.trim().replace(/"/g, '').toLowerCase());
+  // Remove BOM and trim
+  const cleanHeader = headerLine.replace(/^\uFEFF/, ''); 
+  const headers = cleanHeader.split(',').map(h => h.trim().replace(/"/g, '').toLowerCase());
 
   return allLines.slice(headerIndex + 1).filter(l => l.trim()).map(line => {
     const row = {};
@@ -55,25 +56,21 @@ const parseCSVData = (allLines, headerIndex) => {
   });
 };
 
-// --- HELPER: DATE PARSERS ---
-const parseDateMMDDYYYY = (dateStr) => {
+// --- HELPER: ROBUST DATE PARSER (Uses date-fns) ---
+const safeParseDate = (dateStr) => {
   if (!dateStr) return null;
-  const datePart = dateStr.split(' ')[0]; 
-  const parts = datePart.split(/[-/]/);
-  if (parts.length === 3) {
-    return `${parts[2]}-${parts[0]}-${parts[1]}`; 
+  const cleanStr = dateStr.split(' ')[0].trim(); // Remove time if present
+  
+  // Try common formats
+  const formats = ['MM/dd/yyyy', 'dd/MM/yyyy', 'yyyy-MM-dd', 'd/M/yyyy', 'M/d/yyyy'];
+  
+  for (let fmt of formats) {
+    const parsedDate = parse(cleanStr, fmt, new Date());
+    if (isValid(parsedDate)) {
+      return format(parsedDate, 'yyyy-MM-dd');
+    }
   }
-  return null;
-};
-
-const parseDateDDMMYYYY = (dateStr) => {
-  if (!dateStr) return null;
-  const datePart = dateStr.split(' ')[0];
-  const parts = datePart.split(/[-/]/);
-  if (parts.length === 3) {
-    return `${parts[2]}-${parts[1]}-${parts[0]}`; 
-  }
-  return null;
+  return null; 
 };
 
 // --- COMPONENT: COMPARISON TABLE ---
@@ -127,20 +124,19 @@ const LeadSourceTable = ({ data }) => {
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-xs text-left text-slate-600">
-        <thead className="text-[10px] uppercase text-slate-400 bg-slate-50 border-b border-slate-100 font-bold tracking-wider">
+    <div className="overflow-x-auto max-h-[300px]">
+      <table className="w-full text-xs text-left text-slate-600 relative">
+        <thead className="text-[10px] uppercase text-slate-400 bg-slate-50 border-b border-slate-100 font-bold tracking-wider sticky top-0">
           <tr>
-            <th className="py-2 px-3">Name</th>
-            <th className="py-2 px-3">Phone</th>
-            <th className="py-2 px-3">City</th>
-            <th className="py-2 px-3">Status</th>
-            <th className="py-2 px-3">Source</th>
-            <th className="py-2 px-3">Owner</th>
+            <th className="py-2 px-3 bg-slate-50">Name</th>
+            <th className="py-2 px-3 bg-slate-50">Phone</th>
+            <th className="py-2 px-3 bg-slate-50">City</th>
+            <th className="py-2 px-3 bg-slate-50">Status</th>
+            <th className="py-2 px-3 bg-slate-50">Source</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-50 bg-white">
-          {data.slice(0, 10).map((lead, idx) => (
+          {data.slice(0, 50).map((lead, idx) => (
             <tr key={idx} className="hover:bg-blue-50/50 transition-colors">
               <td className="py-2 px-3 font-medium text-slate-800">{lead.name}</td>
               <td className="py-2 px-3 font-mono text-slate-500">{lead.phone}</td>
@@ -157,7 +153,6 @@ const LeadSourceTable = ({ data }) => {
               <td className="py-2 px-3">
                 <span className="bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded border border-slate-200">{lead.source}</span>
               </td>
-              <td className="py-2 px-3 text-slate-500">{lead.owner}</td>
             </tr>
           ))}
         </tbody>
@@ -165,7 +160,6 @@ const LeadSourceTable = ({ data }) => {
     </div>
   );
 };
-
 
 // --- COMPONENT: IMPORT WIZARD ---
 const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
@@ -190,16 +184,16 @@ const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
         // --- SMART DETECTION ---
         for (let i = 0; i < Math.min(allLines.length, 10); i++) {
            const lineLower = allLines[i].toLowerCase();
-           if (lineLower.includes("lead id") && lineLower.includes("qualification level")) {
+           if (lineLower.includes("lead id") && (lineLower.includes("qualification level") || lineLower.includes("lead score"))) {
              detectedType = 'LEADS'; headerRowIndex = i; break;
            }
-           if (lineLower.includes("opportunity offline score") || (lineLower.includes("test drive completed") && lineLower.includes("order number"))) {
+           if ((lineLower.includes("opportunity") || lineLower.includes("test drive")) && lineLower.includes("customer")) {
              detectedType = 'OPPS'; headerRowIndex = i; break;
            }
-           if (lineLower.includes("dealer code") && lineLower.includes("order type")) {
+           if (lineLower.includes("order number") || (lineLower.includes("vin") && lineLower.includes("delivery date"))) {
              detectedType = 'SALES'; headerRowIndex = i; break;
            }
-           if (lineLower.includes("ageing days") && lineLower.includes("primary status")) {
+           if (lineLower.includes("ageing") && lineLower.includes("status") && lineLower.includes("vin")) {
              detectedType = 'INVENTORY'; headerRowIndex = i; break;
            }
         }
@@ -214,17 +208,17 @@ const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
         if (detectedType === 'LEADS') {
           tableName = 'leads_marketing';
           payload = data.map(r => {
-            const dateStr = parseDateMMDDYYYY(r['created on']); 
+            const dateStr = safeParseDate(r['created on'] || r['created date']); 
             return {
               lead_id: r['lead id'],
-              name: r['name'],
-              phone: r['customer phone'],
+              name: r['name'] || r['customer name'],
+              phone: r['customer phone'] || r['mobile'],
               city: r['city'],
               state: r['state'],
               status: r['status'],
               source: r['source'] || 'Unknown',
               campaign: r['campaign'],
-              model: r['model line(fe)'],
+              model: r['model line(fe)'] || r['interested model'],
               owner: r['owner'],
               qualification: r['qualification level'],
               created_on: dateStr,
@@ -235,15 +229,15 @@ const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
         else if (detectedType === 'OPPS') {
           tableName = 'opportunities';
           payload = data.map(r => {
-            const dateStr = parseDateMMDDYYYY(r['created on']);
+            const dateStr = safeParseDate(r['created on']);
             return {
-              id: r['id'],
-              customer: r['customer'],
+              id: r['id'] || r['opportunity id'],
+              customer: r['customer'] || r['name'],
               status: r['status'],
-              model: r['model line(fe)'],
+              model: r['model line(fe)'] || r['model'],
               assigned_to: r['assigned to'],
-              test_drive_status: r['test drive completed'],
-              rating: r['zqualificationlevel'],
+              test_drive_status: r['test drive completed'] || 'No',
+              rating: r['zqualificationlevel'] || r['rating'],
               created_on: dateStr,
               month: dateStr ? dateStr.slice(0, 7) : null
             };
@@ -252,36 +246,40 @@ const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
         else if (detectedType === 'SALES') {
           tableName = 'sales_register';
           payload = data.map(r => {
-             const docDate = parseDateDDMMYYYY(r['document date']);
+             const docDate = safeParseDate(r['document date'] || r['booking date']);
+             const deliveryDate = safeParseDate(r['delivery date']);
              return {
                order_id: r['order number'] || r['vehicle id no.'] || Math.random().toString(), 
-               vin: r['vehicle id no.'],
+               vin: r['vehicle id no.'] || r['vin'],
                customer: r['customer name'],
-               model: r['model sales code'],
+               model: r['model sales code'] || r['model'],
                status: r['status'],
                booking_date: docDate, 
-               delivery_date: parseDateDDMMYYYY(r['delivery date']),
+               delivery_date: deliveryDate,
                finance_bank: r['financier name'],
                insurance_co: r['insurance company name'],
-               month: docDate ? docDate.slice(0, 7) : null
+               month: deliveryDate ? deliveryDate.slice(0, 7) : (docDate ? docDate.slice(0, 7) : null)
              };
           }).filter(r => r.vin || r.order_id);
         }
         else if (detectedType === 'INVENTORY') {
           tableName = 'inventory';
           payload = data.map(r => ({
-            vin: r['vehicle identification number'],
-            model: r['model line'],
+            vin: r['vehicle identification number'] || r['vin'],
+            model: r['model line'] || r['model'],
             ageing_days: parseInt(r['ageing days']) || 0,
             status: r['primary status'],
             location: r['storage location']
           })).filter(r => r.vin);
         }
 
-        if (payload.length === 0) throw new Error("No valid rows found after parsing.");
+        if (payload.length === 0) throw new Error("No valid rows found. Check Date formats in CSV.");
 
         setMessage(`Uploading ${payload.length} rows to ${tableName}...`);
-        const { error } = await supabase.from(tableName).upsert(payload);
+        
+        // Delete old data for this month if needed, or just upsert
+        const { error } = await supabase.from(tableName).upsert(payload, { onConflict: tableName === 'inventory' ? 'vin' : undefined });
+        
         if (error) throw error;
 
         setStatus('success');
@@ -300,7 +298,7 @@ const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
   if (!isOpen) return null;
   return (
     <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center backdrop-blur-sm">
-      <div className="bg-white rounded-xl p-6 w-full max-w-md animate-fade-in">
+      <div className="bg-white rounded-xl p-6 w-full max-w-md animate-fade-in shadow-2xl">
         <h2 className="text-xl font-bold mb-4">Upload Report</h2>
         <div className="border-2 border-dashed border-slate-300 rounded-lg p-8 flex flex-col items-center justify-center relative bg-slate-50 hover:bg-slate-100 transition-colors">
           <Upload className="w-10 h-10 text-blue-500 mb-2"/>
@@ -344,26 +342,23 @@ export default function App() {
     const prevMonth = d.toISOString().slice(0, 7);
 
     try {
-      // Fetch Leads
-      const { data: lC } = await supabase.from('leads_marketing').select('*').eq('month', selectedMonth);
-      const { data: lP } = await supabase.from('leads_marketing').select('*').eq('month', prevMonth);
-      setInquiries({ curr: lC || [], prev: lP || [] });
+      // Parallel Fetching for speed
+      const [lC, lP, oC, oP, sC, sP, inv] = await Promise.all([
+        supabase.from('leads_marketing').select('*').eq('month', selectedMonth),
+        supabase.from('leads_marketing').select('*').eq('month', prevMonth),
+        supabase.from('opportunities').select('*').eq('month', selectedMonth),
+        supabase.from('opportunities').select('*').eq('month', prevMonth),
+        supabase.from('sales_register').select('*').eq('month', selectedMonth),
+        supabase.from('sales_register').select('*').eq('month', prevMonth),
+        supabase.from('inventory').select('*')
+      ]);
 
-      // Fetch Opps
-      const { data: oC } = await supabase.from('opportunities').select('*').eq('month', selectedMonth);
-      const { data: oP } = await supabase.from('opportunities').select('*').eq('month', prevMonth);
-      setOpportunities({ curr: oC || [], prev: oP || [] });
+      setInquiries({ curr: lC.data || [], prev: lP.data || [] });
+      setOpportunities({ curr: oC.data || [], prev: oP.data || [] });
+      setSales({ curr: sC.data || [], prev: sP.data || [] });
+      setInventory(inv.data || []);
 
-      // Fetch Sales
-      const { data: sC } = await supabase.from('sales_register').select('*').eq('month', selectedMonth);
-      const { data: sP } = await supabase.from('sales_register').select('*').eq('month', prevMonth);
-      setSales({ curr: sC || [], prev: sP || [] });
-
-      // Fetch Inventory
-      const { data: inv } = await supabase.from('inventory').select('*');
-      setInventory(inv || []);
-
-    } catch (e) { console.error(e); } 
+    } catch (e) { console.error("Data fetch error:", e); } 
     finally { setLoading(false); }
   }, [selectedMonth]);
 
@@ -445,6 +440,8 @@ export default function App() {
              </div>
            </div>
            <div className="flex items-center gap-4">
+              {loading && <div className="flex items-center gap-2 text-blue-600 text-xs font-bold bg-blue-50 px-3 py-1 rounded-full"><Loader2 className="w-3 h-3 animate-spin" /> Updating...</div>}
+              
               <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200">
                 <button onClick={() => setViewMode('dashboard')} className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${viewMode === 'dashboard' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>Dashboard</button>
                 <button onClick={() => setViewMode('table')} className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${viewMode === 'table' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>Data</button>
@@ -477,7 +474,6 @@ export default function App() {
                    <div className="bg-emerald-50 p-1.5 rounded text-emerald-600"><TrendingUp className="w-4 h-4" /></div>
                    <h3 className="font-bold text-slate-700">Recent Marketing Leads</h3>
                  </div>
-                 {/* Replaced the old list with the detailed table component */}
                  <LeadSourceTable data={inquiries.curr} />
               </div>
 
