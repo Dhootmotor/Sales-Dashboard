@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell 
+} from 'recharts';
+import { 
   LayoutDashboard, Upload, Filter, TrendingUp, TrendingDown, 
   Users, MapPin, Car, DollarSign, ChevronDown, FileSpreadsheet, 
   ArrowUpRight, ArrowDownRight, PieChart as PieChartIcon, Table as TableIcon, 
@@ -30,7 +33,6 @@ const parseCSVData = (allLines, headerIndex) => {
   if (allLines.length < headerIndex + 2) return [];
 
   const headerLine = allLines[headerIndex];
-  // Parse header: split by comma, trim spaces, remove quotes, lowercase
   const headers = headerLine.split(',').map(h => h.trim().replace(/"/g, '').toLowerCase());
 
   return allLines.slice(headerIndex + 1).filter(l => l.trim()).map(line => {
@@ -48,36 +50,33 @@ const parseCSVData = (allLines, headerIndex) => {
         colIndex++;
       } else current += char;
     }
-    // Push last column
     if (headers[colIndex]) row[headers[colIndex]] = current.trim().replace(/"/g, '');
     return row;
   });
 };
 
 // --- HELPER: DATE PARSERS ---
-// Handles "11-26-2025 11:36 AM" -> YYYY-MM-DD
 const parseDateMMDDYYYY = (dateStr) => {
   if (!dateStr) return null;
-  const datePart = dateStr.split(' ')[0]; // Get "11-26-2025"
+  const datePart = dateStr.split(' ')[0]; 
   const parts = datePart.split(/[-/]/);
   if (parts.length === 3) {
-    return `${parts[2]}-${parts[0]}-${parts[1]}`; // YYYY-MM-DD
+    return `${parts[2]}-${parts[0]}-${parts[1]}`; 
   }
   return null;
 };
 
-// Handles "22-11-2025" -> YYYY-MM-DD
 const parseDateDDMMYYYY = (dateStr) => {
   if (!dateStr) return null;
   const datePart = dateStr.split(' ')[0];
   const parts = datePart.split(/[-/]/);
   if (parts.length === 3) {
-    return `${parts[2]}-${parts[1]}-${parts[0]}`; // YYYY-MM-DD
+    return `${parts[2]}-${parts[1]}-${parts[0]}`; 
   }
   return null;
 };
 
-// --- COMPONENT: COMPARISON TABLE (For Summary Cards) ---
+// --- COMPONENT: COMPARISON TABLE ---
 const ComparisonTable = ({ rows, headers, type = 'count' }) => (
   <div className="overflow-hidden">
     <table className="w-full text-sm text-left">
@@ -121,44 +120,44 @@ const ComparisonTable = ({ rows, headers, type = 'count' }) => (
   </div>
 );
 
-// --- COMPONENT: LEAD SOURCE TABLE (Detailed View) ---
+// --- COMPONENT: LEAD SOURCE TABLE ---
 const LeadSourceTable = ({ data }) => {
   if (!data || data.length === 0) {
-    return <div className="p-4 text-center text-slate-400 text-xs">No lead data available for the selected period.</div>;
+    return <div className="p-4 text-center text-slate-400 text-xs">No lead data available. Upload the Marketing Leads CSV.</div>;
   }
 
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-xs text-left text-slate-600">
-        <thead className="text-[10px] uppercase text-slate-500 bg-slate-100 border-b border-slate-200 font-bold tracking-wider">
+        <thead className="text-[10px] uppercase text-slate-400 bg-slate-50 border-b border-slate-100 font-bold tracking-wider">
           <tr>
-            <th className="py-3 px-4">Name</th>
-            <th className="py-3 px-4">Phone</th>
-            <th className="py-3 px-4">City</th>
-            <th className="py-3 px-4">Status</th>
-            <th className="py-3 px-4">Source</th>
-            <th className="py-3 px-4">Owner</th>
+            <th className="py-2 px-3">Name</th>
+            <th className="py-2 px-3">Phone</th>
+            <th className="py-2 px-3">City</th>
+            <th className="py-2 px-3">Status</th>
+            <th className="py-2 px-3">Source</th>
+            <th className="py-2 px-3">Owner</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-slate-100 bg-white">
-          {data.map((lead, idx) => (
+        <tbody className="divide-y divide-slate-50 bg-white">
+          {data.slice(0, 10).map((lead, idx) => (
             <tr key={idx} className="hover:bg-blue-50/50 transition-colors">
-              <td className="py-2 px-4 font-semibold text-slate-800">{lead.name}</td>
-              <td className="py-2 px-4 text-slate-500 font-mono">{lead.phone}</td>
-              <td className="py-2 px-4">{lead.city}</td>
-              <td className="py-2 px-4">
-                <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wide border ${
-                  lead.status?.toLowerCase().includes('hot') ? 'bg-rose-50 text-rose-600 border-rose-100' :
-                  lead.status?.toLowerCase().includes('warm') ? 'bg-orange-50 text-orange-600 border-orange-100' :
-                  'bg-blue-50 text-blue-600 border-blue-100'
+              <td className="py-2 px-3 font-medium text-slate-800">{lead.name}</td>
+              <td className="py-2 px-3 font-mono text-slate-500">{lead.phone}</td>
+              <td className="py-2 px-3">{lead.city}</td>
+              <td className="py-2 px-3">
+                <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border ${
+                  lead.status?.toLowerCase().includes('hot') ? 'bg-rose-50 text-rose-700 border-rose-100' :
+                  lead.status?.toLowerCase().includes('warm') ? 'bg-orange-50 text-orange-700 border-orange-100' :
+                  'bg-blue-50 text-blue-700 border-blue-100'
                 }`}>
                   {lead.status}
                 </span>
               </td>
-              <td className="py-2 px-4">
-                 <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px] border border-slate-200">{lead.source}</span>
+              <td className="py-2 px-3">
+                <span className="bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded border border-slate-200">{lead.source}</span>
               </td>
-              <td className="py-2 px-4 text-slate-600">{lead.owner}</td>
+              <td className="py-2 px-3 text-slate-500">{lead.owner}</td>
             </tr>
           ))}
         </tbody>
@@ -188,10 +187,9 @@ const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
         let detectedType = null;
         let headerRowIndex = -1;
 
-        // --- SMART DETECTION: SCAN FIRST 10 LINES ---
+        // --- SMART DETECTION ---
         for (let i = 0; i < Math.min(allLines.length, 10); i++) {
            const lineLower = allLines[i].toLowerCase();
-           
            if (lineLower.includes("lead id") && lineLower.includes("qualification level")) {
              detectedType = 'LEADS'; headerRowIndex = i; break;
            }
@@ -385,7 +383,7 @@ export default function App() {
     // 1. SALES FUNNEL
     const oppsStats = calcStats(opportunities.curr, opportunities.prev);
     const leadsStats = calcStats(inquiries.curr, inquiries.prev);
-    // Inquiries = Leads (from Lead file) + Opportunities (from Opp file)
+    // Inquiries = Leads + Opportunities
     const inq = { v1: oppsStats.v1 + leadsStats.v1, v2: oppsStats.v2 + leadsStats.v2 };
 
     const tds = calcStats(opportunities.curr.filter(o => o.test_drive_status?.toLowerCase().includes('yes')), opportunities.prev.filter(o => o.test_drive_status?.toLowerCase().includes('yes')));
@@ -473,12 +471,13 @@ export default function App() {
                  <ComparisonTable rows={salesFunnelTable} headers={[prevMonth, currentMonth]} />
               </div>
 
-              {/* 2. LEAD SOURCE TABLE (Replaces old small summary) */}
+              {/* 2. LEAD SOURCE - DETAILED TABLE */}
               <div className="rounded-lg shadow-sm border p-4 bg-white border-slate-200 hover:shadow-md transition-shadow md:col-span-2 xl:col-span-2">
                  <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
                    <div className="bg-emerald-50 p-1.5 rounded text-emerald-600"><TrendingUp className="w-4 h-4" /></div>
                    <h3 className="font-bold text-slate-700">Recent Marketing Leads</h3>
                  </div>
+                 {/* Replaced the old list with the detailed table component */}
                  <LeadSourceTable data={inquiries.curr} />
               </div>
 
