@@ -121,6 +121,51 @@ const ComparisonTable = ({ rows, headers, type = 'count' }) => (
   </div>
 );
 
+// --- COMPONENT: LEAD SOURCE TABLE ---
+const LeadSourceTable = ({ data }) => {
+  if (!data || data.length === 0) {
+    return <div className="p-4 text-center text-slate-400 text-xs">No lead data available</div>;
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs text-left text-slate-600">
+        <thead className="text-[10px] uppercase text-slate-400 bg-slate-50 border-b border-slate-100 font-bold tracking-wider">
+          <tr>
+            <th className="py-2 px-3">Name</th>
+            <th className="py-2 px-3">Phone</th>
+            <th className="py-2 px-3">City</th>
+            <th className="py-2 px-3">Status</th>
+            <th className="py-2 px-3">Source</th>
+            <th className="py-2 px-3">Owner</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-50">
+          {data.slice(0, 10).map((lead, idx) => (
+            <tr key={idx} className="hover:bg-slate-50 transition-colors">
+              <td className="py-2 px-3 font-medium text-slate-800">{lead.name}</td>
+              <td className="py-2 px-3">{lead.phone}</td>
+              <td className="py-2 px-3">{lead.city}</td>
+              <td className="py-2 px-3">
+                <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
+                  lead.status?.toLowerCase().includes('hot') ? 'bg-rose-100 text-rose-700' :
+                  lead.status?.toLowerCase().includes('warm') ? 'bg-orange-100 text-orange-700' :
+                  'bg-blue-100 text-blue-700'
+                }`}>
+                  {lead.status}
+                </span>
+              </td>
+              <td className="py-2 px-3">{lead.source}</td>
+              <td className="py-2 px-3">{lead.owner}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+};
+
+
 // --- COMPONENT: IMPORT WIZARD ---
 const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
   const [file, setFile] = useState(null);
@@ -141,23 +186,17 @@ const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
         let detectedType = null;
         let headerRowIndex = -1;
 
-        // --- SMART DETECTION: SCAN FIRST 10 LINES ---
         for (let i = 0; i < Math.min(allLines.length, 10); i++) {
            const lineLower = allLines[i].toLowerCase();
-           
-           // Marketing Leads
            if (lineLower.includes("lead id") && lineLower.includes("qualification level")) {
              detectedType = 'LEADS'; headerRowIndex = i; break;
            }
-           // Opportunities
            if (lineLower.includes("opportunity offline score") || (lineLower.includes("test drive completed") && lineLower.includes("order number"))) {
              detectedType = 'OPPS'; headerRowIndex = i; break;
            }
-           // Sales Register
            if (lineLower.includes("dealer code") && lineLower.includes("order type")) {
              detectedType = 'SALES'; headerRowIndex = i; break;
            }
-           // Inventory
            if (lineLower.includes("ageing days") && lineLower.includes("primary status")) {
              detectedType = 'INVENTORY'; headerRowIndex = i; break;
            }
@@ -165,12 +204,11 @@ const ImportWizard = ({ isOpen, onClose, onUploadComplete }) => {
 
         if (!detectedType) throw new Error("Unknown file format. Please check file headers.");
 
-        setMessage(`Detected: ${detectedType}. Processing rows...`);
+        setMessage(`Detected: ${detectedType}. Processing...`);
         const data = parseCSVData(allLines, headerRowIndex);
         let payload = [];
         let tableName = '';
 
-        // --- PARSING LOGIC ---
         if (detectedType === 'LEADS') {
           tableName = 'leads_marketing';
           payload = data.map(r => {
@@ -341,15 +379,9 @@ export default function App() {
 
   const dashboardData = useMemo(() => {
     // 1. SALES FUNNEL
-    // Inquiries = (Count from Opps File) + (Count from Leads File)
     const oppsStats = calcStats(opportunities.curr, opportunities.prev);
     const leadsStats = calcStats(inquiries.curr, inquiries.prev);
-    
-    // Combining counts as requested
-    const inq = {
-      v1: oppsStats.v1 + leadsStats.v1,
-      v2: oppsStats.v2 + leadsStats.v2
-    };
+    const inq = { v1: oppsStats.v1 + leadsStats.v1, v2: oppsStats.v2 + leadsStats.v2 };
 
     const tds = calcStats(opportunities.curr.filter(o => o.test_drive_status?.toLowerCase().includes('yes')), opportunities.prev.filter(o => o.test_drive_status?.toLowerCase().includes('yes')));
     const hot = calcStats(opportunities.curr.filter(o => o.rating?.toLowerCase() === 'hot'), opportunities.prev.filter(o => o.rating?.toLowerCase() === 'hot'));
@@ -364,12 +396,7 @@ export default function App() {
       { label: 'Retail', ...retail },
     ];
 
-    // 2. LEAD SOURCE - Source: Leads File Only
-    const sourceMap = {};
-    inquiries.curr.forEach(i => { const s = i.source || 'Unknown'; sourceMap[s] = (sourceMap[s] || 0) + 1; });
-    const leadSourceTable = Object.entries(sourceMap).map(([k, v]) => ({ label: k, v1: 0, v2: v, sub2: leadsStats.v2 ? (v/leadsStats.v2*100).toFixed(1)+'%' : '' })).sort((a,b) => b.v2 - a.v2).slice(0, 5);
-
-    // 3. INVENTORY
+    // 2. INVENTORY
     const totalStock = inventory.length;
     const ageingStock = inventory.filter(i => i.ageing_days > 60).length;
     const inventoryTable = [
@@ -377,7 +404,7 @@ export default function App() {
       { label: 'Ageing > 60 Days', v1: 0, v2: ageingStock },
     ];
 
-    // 4. CROSS SELL
+    // 3. CROSS SELL
     const fin = calcStats(sales.curr.filter(s => s.finance_bank), sales.prev.filter(s => s.finance_bank));
     const ins = calcStats(sales.curr.filter(s => s.insurance_co), sales.prev.filter(s => s.insurance_co));
     const crossSellTable = [
@@ -385,16 +412,16 @@ export default function App() {
       { label: 'Insurance', ...ins, sub2: retail.v2 ? (ins.v2/retail.v2*100).toFixed(0)+'%' : '' },
     ];
 
-    // 5. SALES MANAGEMENT
+    // 4. SALES MANAGEMENT
     const salesMgmtTable = [
       { label: 'Avg Discount', v1: 0, v2: 0, type: 'currency' },
       { label: 'Cancellation', v1: 0, v2: 0 },
     ];
 
-    return { salesFunnelTable, leadSourceTable, inventoryTable, crossSellTable, salesMgmtTable };
+    return { salesFunnelTable, inventoryTable, crossSellTable, salesMgmtTable };
   }, [inquiries, opportunities, sales, inventory]);
 
-  const { salesFunnelTable, leadSourceTable, inventoryTable, crossSellTable, salesMgmtTable } = dashboardData;
+  const { salesFunnelTable, inventoryTable, crossSellTable, salesMgmtTable } = dashboardData;
 
   return (
     <div className="min-h-screen bg-slate-50/50 font-sans pb-10">
@@ -441,13 +468,13 @@ export default function App() {
                  <ComparisonTable rows={salesFunnelTable} headers={[prevMonth, currentMonth]} />
               </div>
 
-              {/* 2. LEAD SOURCE */}
-              <div className="rounded-lg shadow-sm border p-4 bg-white border-slate-200 hover:shadow-md transition-shadow">
+              {/* 2. LEAD SOURCE TABLE (Replaces old small summary) */}
+              <div className="rounded-lg shadow-sm border p-4 bg-white border-slate-200 hover:shadow-md transition-shadow md:col-span-2 xl:col-span-2">
                  <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-100">
                    <div className="bg-emerald-50 p-1.5 rounded text-emerald-600"><TrendingUp className="w-4 h-4" /></div>
-                   <h3 className="font-bold text-slate-700">Lead Source (Top 5)</h3>
+                   <h3 className="font-bold text-slate-700">Recent Marketing Leads</h3>
                  </div>
-                 <ComparisonTable rows={leadSourceTable} headers={["-", "Curr"]} />
+                 <LeadSourceTable data={inquiries.curr} />
               </div>
 
               {/* 3. INVENTORY OVERVIEW */}
