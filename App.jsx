@@ -30,6 +30,7 @@ const parseCSVData = (allLines, headerIndex) => {
   if (allLines.length < headerIndex + 2) return [];
 
   const headerLine = allLines[headerIndex];
+  // Parse header: split by comma, trim spaces, remove quotes, lowercase
   const headers = headerLine.split(',').map(h => h.trim().replace(/"/g, '').toLowerCase());
 
   return allLines.slice(headerIndex + 1).filter(l => l.trim()).map(line => {
@@ -47,6 +48,7 @@ const parseCSVData = (allLines, headerIndex) => {
         colIndex++;
       } else current += char;
     }
+    // Push last column
     if (headers[colIndex]) row[headers[colIndex]] = current.trim().replace(/"/g, '');
     return row;
   });
