@@ -30,7 +30,6 @@ const parseCSVData = (allLines, headerIndex) => {
   if (allLines.length < headerIndex + 2) return [];
 
   const headerLine = allLines[headerIndex];
-  // Parse header: split by comma, trim spaces, remove quotes, lowercase
   const headers = headerLine.split(',').map(h => h.trim().replace(/"/g, '').toLowerCase());
 
   return allLines.slice(headerIndex + 1).filter(l => l.trim()).map(line => {
@@ -48,7 +47,6 @@ const parseCSVData = (allLines, headerIndex) => {
         colIndex++;
       } else current += char;
     }
-    // Push last column
     if (headers[colIndex]) row[headers[colIndex]] = current.trim().replace(/"/g, '');
     return row;
   });
@@ -381,6 +379,7 @@ export default function App() {
     // 1. SALES FUNNEL
     const oppsStats = calcStats(opportunities.curr, opportunities.prev);
     const leadsStats = calcStats(inquiries.curr, inquiries.prev);
+    // Inquiries = Leads (from Lead file) + Opportunities (from Opp file)
     const inq = { v1: oppsStats.v1 + leadsStats.v1, v2: oppsStats.v2 + leadsStats.v2 };
 
     const tds = calcStats(opportunities.curr.filter(o => o.test_drive_status?.toLowerCase().includes('yes')), opportunities.prev.filter(o => o.test_drive_status?.toLowerCase().includes('yes')));
