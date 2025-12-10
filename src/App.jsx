@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Upload, Filter, TrendingUp, TrendingDown, 
   Users, Car, DollarSign, ChevronDown, FileSpreadsheet, 
   ArrowUpRight, ArrowDownRight, 
-  Clock, X, CheckCircle, Download
+  Clock, X, CheckCircle, Download, Trash2
 } from 'lucide-react';
 
 // --- STYLES (Merged from index.css) ---
@@ -149,7 +149,7 @@ const ImportWizard = ({ isOpen, onClose, onDataImported }) => {
           <div className="bg-blue-50 border border-blue-100 p-4 rounded-lg text-sm text-blue-800">
              Upload <strong>"ListofOpportunities.csv"</strong> or <strong>"ListofLeadsCreatedinMarketing.csv"</strong>. <br/>
              <span className="text-xs mt-1 block text-slate-500">
-               * The system will automatically detect the file type and update the corresponding dashboard section.
+               * Data is automatically saved to your browser storage. New uploads are merged with existing data (updates existing IDs, adds new ones).
              </span>
           </div>
 
@@ -176,7 +176,7 @@ const ImportWizard = ({ isOpen, onClose, onDataImported }) => {
             className={`px-4 py-2 text-sm font-bold text-white rounded-lg flex items-center gap-2 ${processing || !file ? 'bg-slate-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
           >
             {processing ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Upload className="w-4 h-4" />}
-            {processing ? 'Processing...' : 'Update Dashboard'}
+            {processing ? 'Processing...' : 'Upload & Merge'}
           </button>
         </div>
       </div>
@@ -241,6 +241,8 @@ export default function App() {
   const [showImport, setShowImport] = useState(false);
   const [viewMode, setViewMode] = useState('dashboard'); 
   const [detailedMetric, setDetailedMetric] = useState('Inquiries');
+  
+  // Data Persistence State
   const [timestamps, setTimestamps] = useState({ opportunities: null, leads: null, inventory: null });
   const [monthLabels, setMonthLabels] = useState(['Last Month', 'Current Month']);
   const [successMsg, setSuccessMsg] = useState(''); 
@@ -248,22 +250,28 @@ export default function App() {
   // Filters
   const [filters, setFilters] = useState({ model: 'All', location: 'All', consultant: 'All' });
 
-  // --- DATA PROCESSING HELPERS ---
-  const getMonthStr = (dateStr) => {
+  // --- INITIAL DATA LOAD (FROM LOCAL STORAGE) ---
+  useEffect(() => {
     try {
-      if(!dateStr) return 'Unknown';
-      // Handle "11-26-2025 04:59 PM" format or ISO
-      const d = new Date(dateStr);
-      if (isNaN(d.getTime())) return 'Unknown';
-      return d.toLocaleString('default', { month: 'short', year: '2-digit' });
-    } catch { return 'Unknown'; }
-  };
+      const savedOpp = localStorage.getItem('dashboard_oppData');
+      const savedLead = localStorage.getItem('dashboard_leadData');
+      const savedTimestamps = localStorage.getItem('dashboard_timestamps');
+      
+      if (savedOpp) {
+        const parsedOpp = JSON.parse(savedOpp);
+        setOppData(parsedOpp);
+        updateMonthLabels(parsedOpp);
+      }
+      if (savedLead) setLeadData(JSON.parse(savedLead));
+      if (savedTimestamps) setTimestamps(JSON.parse(savedTimestamps));
+    } catch (e) {
+      console.error("Failed to load saved data", e);
+    }
+  }, []);
 
-  const processData = (data, type) => {
-    const now = new Date();
-    const ts = `${now.getDate()}-${now.getMonth()+1}-${now.getFullYear()} ${now.getHours()}:${now.getMinutes()}`;
-    
-    // Auto-detect current month from data
+  // --- HELPERS ---
+  const updateMonthLabels = (data) => {
+    if (!data || data.length === 0) return;
     const months = {};
     data.forEach(row => {
       const d = row['createdon'] || row['createddate']; 
@@ -273,84 +281,190 @@ export default function App() {
       }
     });
     
-    // Sort months and pick top 2
+    // Sort months simply by date object
     const sortedMonths = Object.keys(months).sort((a,b) => new Date(a) - new Date(b)); 
     if (sortedMonths.length > 0) {
-       const detectedCurrent = sortedMonths[sortedMonths.length - 1]; 
-       setMonthLabels(['Prev', detectedCurrent]);
+       const current = sortedMonths[sortedMonths.length - 1]; 
+       const prev = sortedMonths.length > 1 ? sortedMonths[sortedMonths.length - 2] : 'Prev';
+       setMonthLabels([prev, current]);
     }
+  };
 
+  const getMonthStr = (dateStr) => {
+    try {
+      if(!dateStr) return 'Unknown';
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return 'Unknown';
+      return d.toLocaleString('default', { month: 'short', year: '2-digit' });
+    } catch { return 'Unknown'; }
+  };
+
+  // --- MERGE & SAVE LOGIC ---
+  const processData = (newData, type) => {
+    const now = new Date();
+    const ts = `${now.getDate()}-${(now.getMonth()+1).toString().padStart(2,'0')}-${now.getFullYear()} ${now.getHours()}:${now.getMinutes()}`;
+    
     if (type === 'opportunities') {
-      setOppData(data);
-      setTimestamps(prev => ({ ...prev, opportunities: ts }));
-      setSuccessMsg(`Uploaded ${data.length} Opportunities`);
+      setOppData(prev => {
+        // Merge logic: Map existing by ID, overwrite with new, then convert back to array
+        const mergedMap = new Map(prev.map(item => [item['id'], item]));
+        newData.forEach(item => {
+          if (item['id']) mergedMap.set(item['id'], item); // Update or Add
+        });
+        const finalData = Array.from(mergedMap.values());
+        
+        // Save to Storage
+        localStorage.setItem('dashboard_oppData', JSON.stringify(finalData));
+        updateMonthLabels(finalData);
+        return finalData;
+      });
+      
+      setTimestamps(prev => {
+        const newTs = { ...prev, opportunities: ts };
+        localStorage.setItem('dashboard_timestamps', JSON.stringify(newTs));
+        return newTs;
+      });
+      setSuccessMsg(`Merged ${newData.length} Opportunities`);
+
     } else if (type === 'leads') {
-      setLeadData(data);
-      setTimestamps(prev => ({ ...prev, leads: ts }));
-      setSuccessMsg(`Uploaded ${data.length} Leads`);
+      setLeadData(prev => {
+        const mergedMap = new Map(prev.map(item => [item['leadid'] || item['lead id'], item]));
+        newData.forEach(item => {
+          const id = item['leadid'] || item['lead id'] || Math.random(); // Fallback ID
+          mergedMap.set(id, item);
+        });
+        const finalData = Array.from(mergedMap.values());
+        
+        localStorage.setItem('dashboard_leadData', JSON.stringify(finalData));
+        return finalData;
+      });
+
+      setTimestamps(prev => {
+        const newTs = { ...prev, leads: ts };
+        localStorage.setItem('dashboard_timestamps', JSON.stringify(newTs));
+        return newTs;
+      });
+      setSuccessMsg(`Merged ${newData.length} Leads`);
+
     } else if (type === 'inventory') {
-      setTimestamps(prev => ({ ...prev, inventory: ts }));
+      // Logic for inventory if needed later
+      setTimestamps(prev => {
+        const newTs = { ...prev, inventory: ts };
+        localStorage.setItem('dashboard_timestamps', JSON.stringify(newTs));
+        return newTs;
+      });
       setSuccessMsg(`Uploaded Inventory Data`);
     }
     setTimeout(() => setSuccessMsg(''), 5000);
   };
 
+  const clearData = () => {
+    if(window.confirm("Are you sure you want to clear all dashboard data?")) {
+      localStorage.removeItem('dashboard_oppData');
+      localStorage.removeItem('dashboard_leadData');
+      localStorage.removeItem('dashboard_timestamps');
+      setOppData([]);
+      setLeadData([]);
+      setTimestamps({ opportunities: null, leads: null, inventory: null });
+      window.location.reload();
+    }
+  };
+
+  // --- FILTERED DATASETS ---
+  const getFilteredData = (data) => {
+    return data.filter(item => {
+      const itemLoc = (item['dealercode'] || item['city'] || '').trim();
+      const itemCons = (item['assignedto'] || item['owner'] || '').trim();
+      const itemModel = (item['modellinefe'] || '').trim();
+
+      const matchLoc = filters.location === 'All' || itemLoc === filters.location;
+      const matchCons = filters.consultant === 'All' || itemCons === filters.consultant;
+      const matchModel = filters.model === 'All' || itemModel === filters.model;
+
+      return matchLoc && matchCons && matchModel;
+    });
+  };
+
+  const filteredOppData = useMemo(() => getFilteredData(oppData), [oppData, filters]);
+  const filteredLeadData = useMemo(() => getFilteredData(leadData), [leadData, filters]);
+
   // --- DERIVED METRICS ---
   
-  // 1. Sales Funnel (From Opportunities File)
+  // 1. Sales Funnel
   const funnelStats = useMemo(() => {
-    const inquiries = oppData.length;
-    
-    const testDrives = oppData.filter(d => {
-      const val = (d['testdrivecompleted'] || '').toLowerCase();
-      return val === 'yes' || val === 'completed' || val === 'done';
-    }).length;
+    // Current Month Data
+    const currOpps = filteredOppData.filter(d => getMonthStr(d['createdon']) === monthLabels[1]);
+    const prevOpps = filteredOppData.filter(d => getMonthStr(d['createdon']) === monthLabels[0]);
 
-    const hotLeads = oppData.filter(d => {
-      const score = parseInt(d['opportunityofflinescore'] || '0');
-      const status = (d['zqualificationlevel'] || d['status'] || '').toLowerCase();
-      return score > 80 || status.includes('hot');
-    }).length;
+    const getMetrics = (data) => {
+      const inquiries = data.length;
+      const testDrives = data.filter(d => {
+        const val = (d['testdrivecompleted'] || '').toLowerCase();
+        return val === 'yes' || val === 'completed' || val === 'done';
+      }).length;
+      const hotLeads = data.filter(d => {
+        const score = parseInt(d['opportunityofflinescore'] || '0');
+        const status = (d['zqualificationlevel'] || d['status'] || '').toLowerCase();
+        return score > 80 || status.includes('hot');
+      }).length;
+      const bookings = data.filter(d => (d['ordernumber'] || '').trim() !== '').length;
+      const retails = data.filter(d => (d['invoicedatev'] || '').trim() !== '').length;
+      return { inquiries, testDrives, hotLeads, bookings, retails };
+    };
 
-    const bookings = oppData.filter(d => (d['ordernumber'] || '').trim() !== '').length;
-    const retails = oppData.filter(d => (d['invoicedatev'] || '').trim() !== '').length;
+    const curr = getMetrics(currOpps);
+    const prev = getMetrics(prevOpps);
 
     return [
-      { label: 'Inquiries', v1: 0, v2: inquiries },
-      { label: 'Test-drives', v1: 0, v2: testDrives, sub2: inquiries ? Math.round((testDrives/inquiries)*100)+'%' : '-' },
-      { label: 'Hot Leads', v1: 0, v2: hotLeads, sub2: inquiries ? Math.round((hotLeads/inquiries)*100)+'%' : '-' },
-      { label: 'Booking Conversion', v1: 0, v2: bookings },
-      { label: 'Retail Conversion', v1: 0, v2: retails },
+      { label: 'Inquiries', v1: prev.inquiries, v2: curr.inquiries },
+      { label: 'Test-drives', v1: prev.testDrives, v2: curr.testDrives, sub2: curr.inquiries ? Math.round((curr.testDrives/curr.inquiries)*100)+'%' : '-' },
+      { label: 'Hot Leads', v1: prev.hotLeads, v2: curr.hotLeads, sub2: curr.inquiries ? Math.round((curr.hotLeads/curr.inquiries)*100)+'%' : '-' },
+      { label: 'Booking Conversion', v1: prev.bookings, v2: curr.bookings },
+      { label: 'Retail Conversion', v1: prev.retails, v2: curr.retails },
     ];
-  }, [oppData]);
+  }, [filteredOppData, monthLabels]);
 
-  // 2. Lead Source (From Leads File preferentially, else Opps)
+  // 2. Lead Source
   const sourceStats = useMemo(() => {
-    const dataset = leadData.length > 0 ? leadData : oppData;
+    // Prefer Lead File, fallback to Opp File
+    const sourceDataset = filteredLeadData.length > 0 ? filteredLeadData : filteredOppData;
+    
+    const currData = sourceDataset.filter(d => getMonthStr(d['createdon'] || d['createddate']) === monthLabels[1]);
+    
     const counts = {};
-    dataset.forEach(d => {
+    currData.forEach(d => {
       const s = d['source'] || 'Unknown';
       counts[s] = (counts[s] || 0) + 1;
     });
     
-    // Sort by count desc
     const sorted = Object.entries(counts)
       .sort(([,a], [,b]) => b - a)
       .slice(0, 6)
       .map(([label, val]) => ({
         label,
-        v1: 0,
+        v1: 0, // Simplified for now (Prev month requires separate calc)
         v2: val,
-        sub2: dataset.length ? Math.round((val/dataset.length)*100)+'%' : '0%'
+        sub2: currData.length ? Math.round((val/currData.length)*100)+'%' : '0%'
       }));
       
     return sorted.length ? sorted : [{label: 'No Data', v1:0, v2:0}];
-  }, [leadData, oppData]);
+  }, [filteredLeadData, filteredOppData, monthLabels]);
 
-  // --- FILTERS & OPTIONS ---
-  const locationOptions = useMemo(() => [...new Set([...oppData, ...leadData].map(d => d['dealercode'] || d['city']).filter(Boolean))].sort(), [oppData, leadData]);
-  const consultantOptions = useMemo(() => [...new Set([...oppData, ...leadData].map(d => d['assignedto'] || d['owner']).filter(Boolean))].sort(), [oppData, leadData]);
-  const modelOptions = useMemo(() => [...new Set([...oppData, ...leadData].map(d => d['modellinefe']).filter(Boolean))].sort(), [oppData, leadData]);
+  // --- FILTERS & OPTIONS (From Columns: Dealer Code & Assigned To) ---
+  // Combine unique values from both datasets
+  const allDataForFilters = useMemo(() => [...oppData, ...leadData], [oppData, leadData]);
+  
+  const locationOptions = useMemo(() => 
+    [...new Set(allDataForFilters.map(d => d['dealercode']).filter(Boolean))].sort(), 
+  [allDataForFilters]);
+
+  const consultantOptions = useMemo(() => 
+    [...new Set(allDataForFilters.map(d => d['assignedto']).filter(Boolean))].sort(), 
+  [allDataForFilters]);
+
+  const modelOptions = useMemo(() => 
+    [...new Set(allDataForFilters.map(d => d['modellinefe']).filter(Boolean))].sort(), 
+  [allDataForFilters]);
 
   // --- VIEW RENDERERS ---
   const DashboardView = () => (
@@ -437,24 +551,24 @@ export default function App() {
   );
 
   const DetailedView = () => {
-    // Simplified logic for detail view using oppData
+    // Simplified logic for detail view using filteredOppData
     const consultantMix = useMemo(() => {
         const counts = {};
-        oppData.forEach(d => { 
+        filteredOppData.forEach(d => { 
             const c = d['assignedto'];
             if(c) counts[c] = (counts[c] || 0) + 1; 
         });
         return Object.entries(counts).map(([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value);
-    }, [oppData]);
+    }, [filteredOppData]);
 
     const modelMix = useMemo(() => {
         const counts = {};
-        oppData.forEach(d => { 
+        filteredOppData.forEach(d => { 
             const m = d['modellinefe'];
             if(m) counts[m] = (counts[m] || 0) + 1; 
         });
         return Object.entries(counts).map(([name, value]) => ({ name, value }));
-    }, [oppData]);
+    }, [filteredOppData]);
 
     return (
       <div className="space-y-6 animate-fade-in">
@@ -466,7 +580,7 @@ export default function App() {
             <h2 className="text-xl font-bold text-blue-700 flex items-center gap-2">
               {detailedMetric} Analysis
             </h2>
-            <p className="text-xs text-slate-400">Analysis based on uploaded data</p>
+            <p className="text-xs text-slate-400">Analysis based on filtered data</p>
           </div>
         </div>
 
@@ -526,7 +640,7 @@ export default function App() {
              </tr>
            </thead>
            <tbody className="divide-y divide-slate-100">
-             {(oppData.length > 0 ? oppData : leadData).slice(0, 100).map((row, idx) => (
+             {(filteredOppData.length > 0 ? filteredOppData : filteredLeadData).slice(0, 100).map((row, idx) => (
                <tr key={idx} className="hover:bg-blue-50/30">
                  <td className="p-3 font-mono text-slate-500">{row['id'] || row['leadid']}</td>
                  <td className="p-3">{row['customer'] || row['name']}</td>
@@ -597,6 +711,14 @@ export default function App() {
                 className="flex items-center gap-2 bg-slate-800 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-slate-700 transition-colors shadow-sm"
               >
                 <Upload className="w-3.5 h-3.5" /> Import Data
+              </button>
+              
+              <button 
+                onClick={clearData}
+                className="flex items-center gap-2 bg-red-100 text-red-700 px-3 py-2 rounded-lg text-xs font-bold hover:bg-red-200 transition-colors shadow-sm"
+                title="Clear All Data"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
               </button>
            </div>
          </div>
