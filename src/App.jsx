@@ -83,6 +83,11 @@ const parseCSV = (text) => {
     const values = parseLine(line);
     const row = {};
     headers.forEach((h, i) => { if (h) row[h] = values[i] || ''; });
+    // Also store original column names for specific lookups like "Dealer Code"
+    rawHeaders.forEach((h, i) => {
+        const key = h.trim(); // Keep original casing/spacing for exact match
+        if (key) row[key] = values[i] || '';
+    });
     return row;
   });
 
@@ -176,7 +181,7 @@ const ImportWizard = ({ isOpen, onClose, onDataImported }) => {
             className={`px-4 py-2 text-sm font-bold text-white rounded-lg flex items-center gap-2 ${processing || !file ? 'bg-slate-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
           >
             {processing ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Upload className="w-4 h-4" />}
-            {processing ? 'Processing...' : 'Upload & Merge'}
+            {processing ? 'Upload & Merge'}
           </button>
         </div>
       </div>
@@ -373,8 +378,9 @@ export default function App() {
   // --- FILTERED DATASETS ---
   const getFilteredData = (data) => {
     return data.filter(item => {
-      const itemLoc = (item['dealercode'] || item['city'] || '').trim();
-      const itemCons = (item['assignedto'] || item['owner'] || '').trim();
+      // Prioritize explicit keys from user request
+      const itemLoc = (item['Dealer Code'] || item['dealercode'] || item['city'] || '').trim();
+      const itemCons = (item['Assigned To'] || item['assignedto'] || item['owner'] || '').trim();
       const itemModel = (item['modellinefe'] || '').trim();
 
       const matchLoc = filters.location === 'All' || itemLoc === filters.location;
@@ -455,11 +461,11 @@ export default function App() {
   const allDataForFilters = useMemo(() => [...oppData, ...leadData], [oppData, leadData]);
   
   const locationOptions = useMemo(() => 
-    [...new Set(allDataForFilters.map(d => d['dealercode']).filter(Boolean))].sort(), 
+    [...new Set(allDataForFilters.map(d => d['Dealer Code'] || d['dealercode']).filter(Boolean))].sort(), 
   [allDataForFilters]);
 
   const consultantOptions = useMemo(() => 
-    [...new Set(allDataForFilters.map(d => d['assignedto']).filter(Boolean))].sort(), 
+    [...new Set(allDataForFilters.map(d => d['Assigned To'] || d['assignedto']).filter(Boolean))].sort(), 
   [allDataForFilters]);
 
   const modelOptions = useMemo(() => 
@@ -555,7 +561,7 @@ export default function App() {
     const consultantMix = useMemo(() => {
         const counts = {};
         filteredOppData.forEach(d => { 
-            const c = d['assignedto'];
+            const c = d['Assigned To'] || d['assignedto'];
             if(c) counts[c] = (counts[c] || 0) + 1; 
         });
         return Object.entries(counts).map(([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value);
