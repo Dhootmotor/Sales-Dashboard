@@ -77,16 +77,13 @@ const parseCSV = (text) => {
   }
 
   const rawHeaders = parseLine(lines[headerIndex]);
-  // Normalized headers for easier access (lowercase, no spaces)
   const headers = rawHeaders.map(h => h.toLowerCase().trim().replace(/[\s_().-]/g, ''));
   
   const rows = lines.slice(headerIndex + 1).map((line) => {
     const values = parseLine(line);
     const row = {};
-    
     // Store using normalized keys (e.g. 'vehicleidentificationnumber')
     headers.forEach((h, i) => { if (h) row[h] = values[i] || ''; });
-    
     // Store using ORIGINAL keys (e.g. 'Vehicle Identification Number') for display/specific logic
     rawHeaders.forEach((h, i) => {
         const key = h.trim(); 
@@ -158,7 +155,7 @@ const ImportWizard = ({ isOpen, onClose, onDataImported }) => {
           <div className="bg-blue-50 border border-blue-100 p-4 rounded-lg text-sm text-blue-800">
              Upload <strong>"ListofOpportunities.csv"</strong>, <strong>"ListofLeads..."</strong> or <strong>"Inventory.csv"</strong>. <br/>
              <span className="text-xs mt-1 block text-slate-500">
-               * Data is automatically saved to your browser storage. New uploads are merged with existing data (updates existing IDs, adds new ones).
+               * Data is automatically saved to your browser storage. New uploads are merged with existing data.
              </span>
           </div>
 
@@ -455,13 +452,24 @@ export default function App() {
     const total = filteredInvData.length;
     // Helper to check status safely - check both normalized and original keys
     const checkStatus = (item, keywords) => {
-       const status = (item['Primary Status'] || item['primarystatus'] || '').toLowerCase();
+       // Look for 'Primary Status' or 'primarystatus' or 'Description of Primary Status'
+       const status = (item['Primary Status'] || item['primarystatus'] || item['Description of Primary Status'] || '').toLowerCase();
        return keywords.some(k => status.includes(k));
     };
 
-    const open = filteredInvData.filter(d => checkStatus(d, ['initial', 'created', 'transit'])).length;
+    // Open: Not booked/allotted
+    const open = filteredInvData.filter(d => {
+        const status = (d['Primary Status'] || d['primarystatus'] || '').toLowerCase();
+        return !status.includes('book') && !status.includes('allot') && !status.includes('block') && !status.includes('invoice');
+    }).length;
+
+    // Booked: Has booked/allotted status
     const booked = filteredInvData.filter(d => checkStatus(d, ['allotted', 'booked', 'blocked'])).length;
-    const wholesale = filteredInvData.filter(d => checkStatus(d, ['wholesale', 'invoice'])).length;
+    
+    // Wholesale: Usually Invoice Created/Wholesale
+    const wholesale = 0; // Set to 0 as requested for now
+    
+    // Ageing > 90
     const ageing = filteredInvData.filter(d => parseInt(d['Ageing Days'] || d['ageingdays'] || '0') > 90).length;
 
     return [
