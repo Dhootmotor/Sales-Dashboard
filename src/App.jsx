@@ -9,17 +9,42 @@ import {
   Clock, X, CheckCircle, Download, Trash2
 } from 'lucide-react';
 
-// --- STYLES ---
+// --- STYLES (Merged from index.css) ---
 const GlobalStyles = () => (
   <style>{`
-    ::-webkit-scrollbar { width: 6px; height: 6px; }
-    ::-webkit-scrollbar-track { background: #f1f5f9; }
-    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
-    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-    .animate-fade-in { animation: fadeIn 0.5s ease-out forwards; }
-    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #f1f5f9; 
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #cbd5e1; 
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8; 
+    }
+    .animate-fade-in {
+      animation: fadeIn 0.5s ease-out forwards;
+    }
+    .animate-fade-in-up {
+      animation: fadeInUp 0.5s ease-out forwards;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
   `}</style>
 );
+
+// --- CONSTANTS & CONFIG ---
+const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658', '#8dd1e1'];
 
 // --- HELPER: CSV PARSER ---
 const parseCSV = (text) => {
@@ -45,22 +70,21 @@ const parseCSV = (text) => {
   for (let i = 0; i < Math.min(lines.length, 20); i++) {
     const rawLine = lines[i].toLowerCase();
     // Check for known columns in ANY file type (Opps, Leads, Inventory)
-    if (rawLine.includes('id') || rawLine.includes('vin') || rawLine.includes('vehicle') || rawLine.includes('company')) {
+    if (rawLine.includes('id') || rawLine.includes('lead id') || rawLine.includes('order number') || rawLine.includes('vehicle identification number') || rawLine.includes('company code')) {
       headerIndex = i;
       break;
     }
   }
 
   const rawHeaders = parseLine(lines[headerIndex]);
-  // Normalize headers for code usage
   const headers = rawHeaders.map(h => h.toLowerCase().trim().replace(/[\s_().-]/g, ''));
   
   const rows = lines.slice(headerIndex + 1).map((line) => {
     const values = parseLine(line);
     const row = {};
-    // Store using normalized keys (e.g., 'primarystatus')
+    // Store using normalized keys (e.g. 'vehicleidentificationnumber')
     headers.forEach((h, i) => { if (h) row[h] = values[i] || ''; });
-    // Store using ORIGINAL keys (e.g., 'Primary Status') for specific display logic
+    // Store using ORIGINAL keys (e.g. 'Vehicle Identification Number') for display/specific logic
     rawHeaders.forEach((h, i) => {
         const key = h.trim(); 
         if (key) row[key] = values[i] || '';
@@ -83,7 +107,6 @@ const ImportWizard = ({ isOpen, onClose, onDataImported }) => {
   };
 
   const processFiles = async () => {
-    if (!file) return;
     setProcessing(true);
     const readFile = (f) => new Promise((resolve) => {
       const reader = new FileReader();
@@ -96,18 +119,13 @@ const ImportWizard = ({ isOpen, onClose, onDataImported }) => {
       const headerString = rawHeaders.join(',').toLowerCase();
       
       let type = 'unknown';
-      // Improved Detection Logic
-      // 1. Check for Inventory specific columns first
-      if (headerString.includes('vehicle identification number') || headerString.includes('vin') || headerString.includes('stock')) {
-        type = 'inventory';
-      } 
-      // 2. Check for Leads
-      else if (headerString.includes('qualification level') || headerString.includes('lead id')) {
-        type = 'leads';
-      } 
-      // 3. Fallback to Opportunities
-      else if (headerString.includes('opportunity offline score') || headerString.includes('order number')) {
+      // Detection Logic based on specific columns in user's files
+      if (headerString.includes('opportunity offline score') || headerString.includes('order number')) {
         type = 'opportunities';
+      } else if (headerString.includes('lead id') || headerString.includes('qualification level')) {
+        type = 'leads';
+      } else if (headerString.includes('vehicle identification number') || headerString.includes('model sales code') || headerString.includes('company code')) {
+        type = 'inventory'; 
       }
 
       onDataImported(rows, type);
@@ -125,26 +143,48 @@ const ImportWizard = ({ isOpen, onClose, onDataImported }) => {
 
   return (
     <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center backdrop-blur-sm">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 animate-fade-in">
-        <div className="flex justify-between items-center mb-6">
-          <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Upload className="w-5 h-5" /> Import Data</h2>
-          <button onClick={onClose}><X className="w-5 h-5 text-slate-400" /></button>
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-xl overflow-hidden animate-fade-in-up">
+        <div className="bg-slate-800 px-6 py-4 flex justify-between items-center">
+          <h2 className="text-white font-bold text-lg flex items-center gap-2">
+            <Upload className="w-5 h-5" /> Import Data
+          </h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
         </div>
         
-        <div className="border-2 border-dashed border-slate-300 rounded-lg p-8 flex flex-col items-center justify-center text-center bg-slate-50 relative mb-6">
-           <FileSpreadsheet className="w-10 h-10 text-blue-500 mb-2" />
-           <p className="text-sm font-medium text-slate-600 mb-1">{file ? file.name : "Drag & Drop or Click to Select"}</p>
-           <p className="text-xs text-slate-400">Supports: Opportunities, Leads, Inventory CSVs</p>
-           <input type="file" accept=".csv" onChange={handleFileChange} className="absolute inset-0 opacity-0 cursor-pointer" />
+        <div className="p-6 space-y-6">
+          <div className="bg-blue-50 border border-blue-100 p-4 rounded-lg text-sm text-blue-800">
+             Upload <strong>"ListofOpportunities.csv"</strong>, <strong>"ListofLeads..."</strong> or <strong>"Inventory.csv"</strong>. <br/>
+             <span className="text-xs mt-1 block text-slate-500">
+               * Data is automatically saved to your browser storage. New uploads are merged with existing data.
+             </span>
+          </div>
+
+          <div className="border-2 border-dashed border-slate-200 rounded-lg p-8 hover:border-blue-400 transition-colors bg-slate-50 relative group flex flex-col items-center justify-center text-center">
+                <FileSpreadsheet className="w-12 h-12 text-blue-600 mb-4" /> 
+                <div className="text-slate-700 font-semibold text-lg mb-1">
+                  {file ? file.name : "Click to Upload CSV"}
+                </div>
+                <p className="text-sm text-slate-400">Supported format: .csv</p>
+                <input 
+                  type="file" 
+                  accept=".csv"
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                  onChange={handleFileChange}
+                />
+          </div>
         </div>
 
-        <button 
-          onClick={processFiles} 
-          disabled={!file || processing}
-          className="w-full bg-slate-900 text-white py-3 rounded-lg font-bold text-sm disabled:opacity-50 hover:bg-slate-800 transition-colors"
-        >
-          {processing ? 'Processing...' : 'Upload & Update Dashboard'}
-        </button>
+        <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-3">
+          <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-200 rounded-lg">Cancel</button>
+          <button 
+            onClick={processFiles} 
+            disabled={processing || !file}
+            className={`px-4 py-2 text-sm font-bold text-white rounded-lg flex items-center gap-2 ${processing || !file ? 'bg-slate-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
+          >
+            {processing ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Upload className="w-4 h-4" />}
+            {processing ? 'Processing...' : 'Upload & Merge'}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -204,7 +244,7 @@ const ComparisonTable = ({ rows, headers, type = 'count', timestamp }) => (
 export default function App() {
   const [oppData, setOppData] = useState([]);
   const [leadData, setLeadData] = useState([]);
-  const [invData, setInvData] = useState([]);
+  const [invData, setInvData] = useState([]); // State for Inventory
   const [showImport, setShowImport] = useState(false);
   const [viewMode, setViewMode] = useState('dashboard'); 
   const [detailedMetric, setDetailedMetric] = useState('Inquiries');
@@ -222,7 +262,7 @@ export default function App() {
     try {
       const savedOpp = localStorage.getItem('dashboard_oppData');
       const savedLead = localStorage.getItem('dashboard_leadData');
-      const savedInv = localStorage.getItem('dashboard_invData');
+      const savedInv = localStorage.getItem('dashboard_invData'); // Load Inventory
       const savedTimestamps = localStorage.getItem('dashboard_timestamps');
       
       if (savedOpp) {
@@ -250,6 +290,7 @@ export default function App() {
       }
     });
     
+    // Sort months simply by date object
     const sortedMonths = Object.keys(months).sort((a,b) => new Date(a) - new Date(b)); 
     if (sortedMonths.length > 0) {
        const current = sortedMonths[sortedMonths.length - 1]; 
@@ -279,10 +320,12 @@ export default function App() {
           if (item['id']) mergedMap.set(item['id'], item); 
         });
         const finalData = Array.from(mergedMap.values());
+        
         localStorage.setItem('dashboard_oppData', JSON.stringify(finalData));
         updateMonthLabels(finalData);
         return finalData;
       });
+      
       setTimestamps(prev => {
         const newTs = { ...prev, opportunities: ts };
         localStorage.setItem('dashboard_timestamps', JSON.stringify(newTs));
@@ -298,9 +341,11 @@ export default function App() {
           mergedMap.set(id, item);
         });
         const finalData = Array.from(mergedMap.values());
+        
         localStorage.setItem('dashboard_leadData', JSON.stringify(finalData));
         return finalData;
       });
+
       setTimestamps(prev => {
         const newTs = { ...prev, leads: ts };
         localStorage.setItem('dashboard_timestamps', JSON.stringify(newTs));
@@ -310,25 +355,24 @@ export default function App() {
 
     } else if (type === 'inventory') {
       setInvData(prev => {
-        // ID: 'Vehicle Identification Number' or 'vin' or 'vehicleidentificationnumber'
-        // Normalize keys during merge logic to handle different casing from previous saves
-        const mergedMap = new Map(prev.map(item => [item['Vehicle Identification Number'] || item['vehicleidentificationnumber'] || item['vin'], item]));
+        // ID for inventory is usually VIN. Check for lowercase 'vehicleidentificationnumber' because parser lowercases keys.
+        const mergedMap = new Map(prev.map(item => [item['vehicleidentificationnumber'] || item['vin'], item]));
         newData.forEach(item => {
-          const id = item['Vehicle Identification Number'] || item['vehicleidentificationnumber'] || item['vin'] || Math.random();
+          const id = item['vehicleidentificationnumber'] || item['vin'] || Math.random();
           mergedMap.set(id, item);
         });
         const finalData = Array.from(mergedMap.values());
+        
         localStorage.setItem('dashboard_invData', JSON.stringify(finalData));
         return finalData;
       });
+
       setTimestamps(prev => {
         const newTs = { ...prev, inventory: ts };
         localStorage.setItem('dashboard_timestamps', JSON.stringify(newTs));
         return newTs;
       });
       setSuccessMsg(`Uploaded ${newData.length} Inventory Records`);
-    } else {
-        setSuccessMsg(`Unknown File Type`);
     }
     setTimeout(() => setSuccessMsg(''), 5000);
   };
@@ -353,7 +397,7 @@ export default function App() {
       // Prioritize explicit keys from user request
       const itemLoc = (item['Dealer Code'] || item['dealercode'] || item['city'] || '').trim();
       const itemCons = (item['Assigned To'] || item['assignedto'] || item['owner'] || '').trim();
-      const itemModel = (item['modellinefe'] || item['modelline'] || item['Model Line'] || item['modelline'] || '').trim();
+      const itemModel = (item['modellinefe'] || item['modelline'] || item['Model Line'] || '').trim();
 
       const matchLoc = filters.location === 'All' || itemLoc === filters.location;
       const matchCons = filters.consultant === 'All' || itemCons === filters.consultant;
@@ -371,6 +415,7 @@ export default function App() {
   
   // 1. Sales Funnel
   const funnelStats = useMemo(() => {
+    // Current Month Data
     const currOpps = filteredOppData.filter(d => getMonthStr(d['createdon']) === monthLabels[1]);
     const prevOpps = filteredOppData.filter(d => getMonthStr(d['createdon']) === monthLabels[0]);
 
@@ -402,24 +447,29 @@ export default function App() {
     ];
   }, [filteredOppData, monthLabels]);
 
-  // 2. Inventory Stats
+  // 2. Inventory Stats (Real Calculation)
   const inventoryStats = useMemo(() => {
     const total = filteredInvData.length;
-    
-    // Logic for Open vs Booked
-    // Look for status keywords in both normalized and original keys
-    const getStatus = (item) => (item['Primary Status'] || item['primarystatus'] || item['Description of Primary Status'] || '').toLowerCase();
-    
-    // Booked if status contains specific keywords
-    const booked = filteredInvData.filter(d => {
-        const s = getStatus(d);
-        return s.includes('book') || s.includes('allot') || s.includes('block') || s.includes('sold') || s.includes('delivered');
+    // Helper to check status safely - check both normalized and original keys
+    const checkStatus = (item, keywords) => {
+       // Look for 'Primary Status' or 'primarystatus' or 'Description of Primary Status'
+       const status = (item['Primary Status'] || item['primarystatus'] || item['Description of Primary Status'] || '').toLowerCase();
+       return keywords.some(k => status.includes(k));
+    };
+
+    // Open: Not booked/allotted
+    const open = filteredInvData.filter(d => {
+        const status = (d['Primary Status'] || d['primarystatus'] || '').toLowerCase();
+        return !status.includes('book') && !status.includes('allot') && !status.includes('block') && !status.includes('invoice');
     }).length;
 
-    // Open is basically Total - Booked - Wholesale (if any)
-    const open = total - booked; 
-
-    const wholesale = 0; // Per request
+    // Booked: Has booked/allotted status
+    const booked = filteredInvData.filter(d => checkStatus(d, ['allotted', 'booked', 'blocked'])).length;
+    
+    // Wholesale: Usually Invoice Created/Wholesale
+    const wholesale = 0; // Set to 0 as requested for now
+    
+    // Ageing > 90
     const ageing = filteredInvData.filter(d => parseInt(d['Ageing Days'] || d['ageingdays'] || '0') > 90).length;
 
     return [
@@ -433,7 +483,9 @@ export default function App() {
 
   // 3. Lead Source
   const sourceStats = useMemo(() => {
+    // Prefer Lead File, fallback to Opp File
     const sourceDataset = filteredLeadData.length > 0 ? filteredLeadData : filteredOppData;
+    
     const currData = sourceDataset.filter(d => getMonthStr(d['createdon'] || d['createddate']) === monthLabels[1]);
     
     const counts = {};
@@ -447,7 +499,7 @@ export default function App() {
       .slice(0, 6)
       .map(([label, val]) => ({
         label,
-        v1: 0, 
+        v1: 0, // Simplified for now (Prev month requires separate calc)
         v2: val,
         sub2: currData.length ? Math.round((val/currData.length)*100)+'%' : '0%'
       }));
@@ -455,20 +507,205 @@ export default function App() {
     return sorted.length ? sorted : [{label: 'No Data', v1:0, v2:0}];
   }, [filteredLeadData, filteredOppData, monthLabels]);
 
-  // --- FILTERS ---
-  const allData = useMemo(() => [...oppData, ...leadData, ...invData], [oppData, leadData, invData]);
+  // --- FILTERS & OPTIONS (From Columns: Dealer Code & Assigned To) ---
+  // Combine unique values from both datasets
+  const allDataForFilters = useMemo(() => [...oppData, ...leadData, ...invData], [oppData, leadData, invData]);
   
   const locationOptions = useMemo(() => 
-    [...new Set(allData.map(d => d['Dealer Code'] || d['dealercode']).filter(Boolean))].sort(), 
-  [allData]);
+    [...new Set(allDataForFilters.map(d => d['Dealer Code'] || d['dealercode']).filter(Boolean))].sort(), 
+  [allDataForFilters]);
 
   const consultantOptions = useMemo(() => 
-    [...new Set(allData.map(d => d['Assigned To'] || d['assignedto']).filter(Boolean))].sort(), 
-  [allData]);
+    [...new Set(allDataForFilters.map(d => d['Assigned To'] || d['assignedto']).filter(Boolean))].sort(), 
+  [allDataForFilters]);
 
   const modelOptions = useMemo(() => 
-    [...new Set(allData.map(d => d['modellinefe'] || d['Model Line']).filter(Boolean))].sort(), 
-  [allData]);
+    [...new Set(allDataForFilters.map(d => d['modellinefe'] || d['Model Line']).filter(Boolean))].sort(), 
+  [allDataForFilters]);
+
+  // --- VIEW RENDERERS ---
+  const DashboardView = () => (
+    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 animate-fade-in">
+       {/* Card 1: Sales Funnel */}
+       <div className={`rounded-lg shadow-sm border p-4 flex flex-col h-full hover:shadow-md transition-shadow cursor-pointer bg-white border-slate-200`} onClick={() => { setDetailedMetric('Inquiries'); setViewMode('detailed'); }}>
+          <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-2">
+            <div className="bg-blue-50 p-1.5 rounded text-blue-600"><LayoutDashboard className="w-4 h-4" /></div>
+            <h3 className="font-bold text-slate-700">Sales Funnel</h3>
+          </div>
+          <ComparisonTable rows={funnelStats} headers={monthLabels} timestamp={timestamps.opportunities} />
+       </div>
+
+       {/* Card 2: Inventory */}
+       <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-4 flex flex-col h-full hover:shadow-md transition-shadow">
+          <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-2">
+            <div className="bg-indigo-50 p-1.5 rounded text-indigo-600"><Car className="w-4 h-4" /></div>
+            <h3 className="font-bold text-slate-700">Inventory</h3>
+          </div>
+          <ComparisonTable 
+             rows={inventoryStats} 
+             headers={['', 'Total']} 
+             timestamp={timestamps.inventory} 
+           />
+       </div>
+
+       {/* Card 3: Lead Source */}
+       <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-4 flex flex-col h-full hover:shadow-md transition-shadow">
+          <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-2">
+            <div className="bg-emerald-50 p-1.5 rounded text-emerald-600"><TrendingUp className="w-4 h-4" /></div>
+            <h3 className="font-bold text-slate-700">Lead Source</h3>
+          </div>
+          <ComparisonTable rows={sourceStats} headers={monthLabels} timestamp={timestamps.leads} />
+       </div>
+
+       {/* Card 4: Cross Sell */}
+       <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-4 flex flex-col h-full hover:shadow-md transition-shadow">
+          <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-2">
+            <div className="bg-purple-50 p-1.5 rounded text-purple-600"><FileSpreadsheet className="w-4 h-4" /></div>
+            <h3 className="font-bold text-slate-700">Cross-Sell</h3>
+          </div>
+          <ComparisonTable rows={[
+               {label: 'Car Finance', v1: 0, v2: 0},
+               {label: 'Insurance', v1: 0, v2: 0},
+               {label: 'Exchange', v1: 0, v2: 0},
+               {label: 'Accessories', v1: 0, v2: 0, type: 'currency'}
+           ]} headers={monthLabels} timestamp={timestamps.opportunities} />
+       </div>
+
+       {/* Card 5: Sales Management */}
+       <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-4 flex flex-col h-full hover:shadow-md transition-shadow">
+          <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-2">
+            <div className="bg-orange-50 p-1.5 rounded text-orange-600"><Users className="w-4 h-4" /></div>
+            <h3 className="font-bold text-slate-700">Sales Management</h3>
+          </div>
+          <ComparisonTable rows={[
+               {label: 'Bookings', v1: 0, v2: funnelStats[3].v2},
+               {label: 'Dlr. Retail', v1: 0, v2: funnelStats[4].v2},
+               {label: 'OEM Retail', v1: 0, v2: 0},
+               {label: 'POC Sales', v1: 0, v2: 0}
+           ]} headers={monthLabels} timestamp={timestamps.opportunities} />
+       </div>
+
+       {/* Card 6: Profit */}
+       <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-4 flex flex-col h-full hover:shadow-md transition-shadow">
+          <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-2">
+            <div className="bg-rose-50 p-1.5 rounded text-rose-600"><DollarSign className="w-4 h-4" /></div>
+            <h3 className="font-bold text-slate-700">Profit & Productivity</h3>
+          </div>
+          <ComparisonTable rows={[
+               {label: 'New car Margin', v1: 0, v2: 0, type: 'currency'},
+               {label: 'Margin per car', v1: 0, v2: 0},
+               {label: 'Used cars Margin', v1: 0, v2: 0, type: 'currency'},
+               {label: 'SC Productivity', v1: 0, v2: 0},
+           ]} headers={monthLabels} timestamp={timestamps.opportunities} />
+       </div>
+    </div>
+  );
+
+  const DetailedView = () => {
+    // Simplified logic for detail view using filteredOppData
+    const consultantMix = useMemo(() => {
+        const counts = {};
+        filteredOppData.forEach(d => { 
+            const c = d['Assigned To'] || d['assignedto'];
+            if(c) counts[c] = (counts[c] || 0) + 1; 
+        });
+        return Object.entries(counts).map(([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value);
+    }, [filteredOppData]);
+
+    const modelMix = useMemo(() => {
+        const counts = {};
+        filteredOppData.forEach(d => { 
+            const m = d['modellinefe'];
+            if(m) counts[m] = (counts[m] || 0) + 1; 
+        });
+        return Object.entries(counts).map(([name, value]) => ({ name, value }));
+    }, [filteredOppData]);
+
+    return (
+      <div className="space-y-6 animate-fade-in">
+        <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200 flex items-center gap-3">
+          <button onClick={() => setViewMode('dashboard')} className="p-1 hover:bg-slate-100 rounded">
+             <ArrowDownRight className="w-5 h-5 text-slate-500 rotate-135" />
+          </button>
+          <div>
+            <h2 className="text-xl font-bold text-blue-700 flex items-center gap-2">
+              {detailedMetric} Analysis
+            </h2>
+            <p className="text-xs text-slate-400">Analysis based on filtered data</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+           <div className="lg:col-span-2 bg-white p-6 rounded-lg shadow-sm border border-slate-200">
+             <h3 className="font-bold text-slate-700 mb-4">Consultant Performance</h3>
+             <div className="h-64">
+               <ResponsiveContainer width="100%" height="100%">
+                 <BarChart data={consultantMix} layout="vertical" margin={{left: 40}}>
+                   <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
+                   <XAxis type="number" hide />
+                   <YAxis dataKey="name" type="category" width={110} tick={{fontSize: 10}} axisLine={false} tickLine={false} />
+                   <RechartsTooltip cursor={{fill: '#f8fafc'}} />
+                   <Bar dataKey="value" fill="#6366f1" radius={[0, 4, 4, 0]} barSize={18} />
+                 </BarChart>
+               </ResponsiveContainer>
+             </div>
+           </div>
+
+           <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
+             <h3 className="font-bold text-slate-700 mb-4">Model Split</h3>
+             <div className="h-64">
+               <ResponsiveContainer width="100%" height="100%">
+                 <PieChart>
+                   <Pie data={modelMix} innerRadius={60} outerRadius={80} paddingAngle={2} dataKey="value">
+                     {modelMix.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
+                   </Pie>
+                   <RechartsTooltip />
+                   <Legend verticalAlign="bottom" height={36} iconType="circle" iconSize={8} />
+                 </PieChart>
+               </ResponsiveContainer>
+             </div>
+           </div>
+        </div>
+      </div>
+    );
+  };
+
+  const TableView = () => (
+    <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
+       <div className="p-4 border-b border-slate-100 flex justify-between items-center">
+          <h3 className="font-bold text-slate-700">Raw Data</h3>
+          <button className="flex items-center gap-2 bg-emerald-600 text-white px-3 py-1.5 rounded text-xs font-bold hover:bg-emerald-700">
+            <Download className="w-3 h-3" /> Excel
+          </button>
+       </div>
+       <div className="overflow-x-auto">
+         <table className="w-full text-left text-xs text-slate-600">
+           <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
+             <tr>
+               <th className="p-3">ID</th>
+               <th className="p-3">Customer</th>
+               <th className="p-3">Mobile</th>
+               <th className="p-3">Model</th>
+               <th className="p-3">Date</th>
+               <th className="p-3">Status</th>
+             </tr>
+           </thead>
+           <tbody className="divide-y divide-slate-100">
+             {(filteredOppData.length > 0 ? filteredOppData : (filteredLeadData.length > 0 ? filteredLeadData : filteredInvData)).slice(0, 100).map((row, idx) => (
+               <tr key={idx} className="hover:bg-blue-50/30">
+                 <td className="p-3 font-mono text-slate-500">{row['id'] || row['leadid'] || row['vehicleidentificationnumber'] || row['vin']}</td>
+                 <td className="p-3">{row['customer'] || row['name'] || '-'}</td>
+                 <td className="p-3">{row['mobile no.'] || row['customer phone'] || '-'}</td>
+                 <td className="p-3"><span className="bg-slate-100 px-2 py-0.5 rounded border border-slate-200">{row['modellinefe'] || row['modelline']}</span></td>
+                 <td className="p-3">{row['createdon'] || row['createddate'] || row['grndate']}</td>
+                 <td className="p-3">{row['status'] || row['qualificationlevel'] || row['primarystatus']}</td>
+               </tr>
+             ))}
+           </tbody>
+         </table>
+       </div>
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-slate-50/50 font-sans pb-10">
