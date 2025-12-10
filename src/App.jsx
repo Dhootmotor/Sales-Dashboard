@@ -44,7 +44,8 @@ const parseCSV = (text) => {
   let headerIndex = 0;
   for (let i = 0; i < Math.min(lines.length, 20); i++) {
     const rawLine = lines[i].toLowerCase();
-    if (rawLine.includes('id') || rawLine.includes('vin') || rawLine.includes('vehicle')) {
+    // Check for known columns in ANY file type (Opps, Leads, Inventory)
+    if (rawLine.includes('id') || rawLine.includes('vin') || rawLine.includes('vehicle') || rawLine.includes('company')) {
       headerIndex = i;
       break;
     }
@@ -57,9 +58,9 @@ const parseCSV = (text) => {
   const rows = lines.slice(headerIndex + 1).map((line) => {
     const values = parseLine(line);
     const row = {};
-    // Store using normalized keys
+    // Store using normalized keys (e.g., 'primarystatus')
     headers.forEach((h, i) => { if (h) row[h] = values[i] || ''; });
-    // Store using ORIGINAL keys for specific display logic if needed
+    // Store using ORIGINAL keys (e.g., 'Primary Status') for specific display logic
     rawHeaders.forEach((h, i) => {
         const key = h.trim(); 
         if (key) row[key] = values[i] || '';
@@ -98,7 +99,7 @@ const ImportWizard = ({ isOpen, onClose, onDataImported }) => {
       else if (headerString.includes('qualification level') || headerString.includes('lead id')) {
         type = 'leads';
       } 
-      // 3. Fallback to Opportunities (which might share 'order number' with inventory)
+      // 3. Fallback to Opportunities
       else if (headerString.includes('opportunity offline score') || headerString.includes('order number')) {
         type = 'opportunities';
       }
@@ -303,10 +304,11 @@ export default function App() {
 
     } else if (type === 'inventory') {
       setInvData(prev => {
-        // Look for 'vehicleidentificationnumber' or 'vin' in lowercase normalized keys
-        const mergedMap = new Map(prev.map(item => [item['vehicleidentificationnumber'] || item['vin'], item]));
+        // ID: 'Vehicle Identification Number' or 'vin' or 'vehicleidentificationnumber'
+        // Normalize keys during merge logic to handle different casing from previous saves
+        const mergedMap = new Map(prev.map(item => [item['Vehicle Identification Number'] || item['vehicleidentificationnumber'] || item['vin'], item]));
         newData.forEach(item => {
-          const id = item['vehicleidentificationnumber'] || item['vin'] || Math.random();
+          const id = item['Vehicle Identification Number'] || item['vehicleidentificationnumber'] || item['vin'] || Math.random();
           mergedMap.set(id, item);
         });
         const finalData = Array.from(mergedMap.values());
@@ -342,6 +344,7 @@ export default function App() {
   // --- FILTERED DATASETS ---
   const getFilteredData = (data) => {
     return data.filter(item => {
+      // Prioritize explicit keys from user request
       const itemLoc = (item['Dealer Code'] || item['dealercode'] || item['city'] || '').trim();
       const itemCons = (item['Assigned To'] || item['assignedto'] || item['owner'] || '').trim();
       const itemModel = (item['modellinefe'] || item['modelline'] || item['Model Line'] || item['modelline'] || '').trim();
@@ -401,16 +404,14 @@ export default function App() {
     // Look for status keywords in both normalized and original keys
     const getStatus = (item) => (item['Primary Status'] || item['primarystatus'] || item['Description of Primary Status'] || '').toLowerCase();
     
+    // Booked if status contains specific keywords
     const booked = filteredInvData.filter(d => {
         const s = getStatus(d);
-        return s.includes('book') || s.includes('allot') || s.includes('block') || s.includes('sold');
+        return s.includes('book') || s.includes('allot') || s.includes('block') || s.includes('sold') || s.includes('delivered');
     }).length;
 
-    // Open is anything not booked and not wholesale/invoiced
-    const open = filteredInvData.filter(d => {
-        const s = getStatus(d);
-        return !s.includes('book') && !s.includes('allot') && !s.includes('block') && !s.includes('invoice') && !s.includes('sold');
-    }).length;
+    // Open is basically Total - Booked - Wholesale (if any)
+    const open = total - booked; 
 
     const wholesale = 0; // Per request
     const ageing = filteredInvData.filter(d => parseInt(d['Ageing Days'] || d['ageingdays'] || '0') > 90).length;
@@ -466,8 +467,15 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50/50 font-sans pb-10">
        <GlobalStyles />
-       <ImportWizard isOpen={showImport} onClose={() => setShowImport(false)} onDataImported={processData} />
        
+       {/* IMPORTER MODAL */}
+       <ImportWizard 
+         isOpen={showImport} 
+         onClose={() => setShowImport(false)} 
+         onDataImported={processData} 
+       />
+
+       {/* HEADER */}
        <header className="bg-white border-b border-slate-200 sticky top-0 z-40">
          <div className="max-w-[1920px] mx-auto px-4 h-16 flex items-center justify-between">
            <div className="flex items-center gap-3">
@@ -484,40 +492,112 @@ export default function App() {
 
            <div className="flex items-center gap-4">
               <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200">
-                <button onClick={() => setViewMode('dashboard')} className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${viewMode === 'dashboard' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Dashboard</button>
-                <button onClick={() => setViewMode('detailed')} className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${viewMode === 'detailed' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Analysis</button>
-                <button onClick={() => setViewMode('table')} className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${viewMode === 'table' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Data</button>
+                <button 
+                  onClick={() => setViewMode('dashboard')}
+                  className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${viewMode === 'dashboard' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                  Dashboard
+                </button>
+                <button 
+                  onClick={() => setViewMode('detailed')}
+                  className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${viewMode === 'detailed' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                  Analysis
+                </button>
+                <button 
+                  onClick={() => setViewMode('table')}
+                  className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${viewMode === 'table' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                  Data
+                </button>
               </div>
-              <button onClick={() => setShowImport(true)} className="flex items-center gap-2 bg-slate-800 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-slate-700 transition-colors shadow-sm"><Upload className="w-3.5 h-3.5" /> Import Data</button>
-              <button onClick={clearData} className="flex items-center gap-2 bg-red-100 text-red-700 px-3 py-2 rounded-lg text-xs font-bold hover:bg-red-200 transition-colors shadow-sm" title="Clear All Data"><Trash2 className="w-3.5 h-3.5" /></button>
+
+              <div className="h-8 w-[1px] bg-slate-200"></div>
+
+              <button 
+                onClick={() => setShowImport(true)}
+                className="flex items-center gap-2 bg-slate-800 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-slate-700 transition-colors shadow-sm"
+              >
+                <Upload className="w-3.5 h-3.5" /> Import Data
+              </button>
+              
+              <button 
+                onClick={clearData}
+                className="flex items-center gap-2 bg-red-100 text-red-700 px-3 py-2 rounded-lg text-xs font-bold hover:bg-red-200 transition-colors shadow-sm"
+                title="Clear All Data"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
            </div>
          </div>
 
-         {successMsg && <div className="bg-emerald-50 border-b border-emerald-100 px-4 py-2 flex items-center justify-center gap-2 text-xs font-bold text-emerald-700 animate-fade-in"><CheckCircle className="w-4 h-4" /> {successMsg}</div>}
+         {/* SUCCESS BANNER */}
+         {successMsg && (
+           <div className="bg-emerald-50 border-b border-emerald-100 px-4 py-2 flex items-center justify-center gap-2 text-xs font-bold text-emerald-700 animate-fade-in">
+             <CheckCircle className="w-4 h-4" /> {successMsg}
+           </div>
+         )}
 
+         {/* FILTER BAR */}
          <div className="border-t border-slate-100 bg-slate-50/50 px-4 py-2">
            <div className="max-w-[1920px] mx-auto flex flex-wrap items-center gap-4">
-              <div className="flex items-center gap-2 text-slate-500 text-xs font-bold uppercase tracking-wide"><Filter className="w-3.5 h-3.5" /> Filters:</div>
+              <div className="flex items-center gap-2 text-slate-500 text-xs font-bold uppercase tracking-wide">
+                <Filter className="w-3.5 h-3.5" /> Filters:
+              </div>
+              
+              {/* Filter 1: Model */}
               <div className="relative">
-                <select className="appearance-none bg-white border border-slate-200 pl-3 pr-8 py-1.5 rounded text-xs font-medium text-slate-700 focus:outline-none focus:border-blue-400 shadow-sm min-w-[120px]" value={filters.model} onChange={e => setFilters({...filters, model: e.target.value})}>
+                <select 
+                  className="appearance-none bg-white border border-slate-200 pl-3 pr-8 py-1.5 rounded text-xs font-medium text-slate-700 focus:outline-none focus:border-blue-400 shadow-sm min-w-[120px]"
+                  value={filters.model}
+                  onChange={e => setFilters({...filters, model: e.target.value})}
+                >
                   <option value="All">All Models</option>
                   {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
                 </select>
                 <ChevronDown className="w-3 h-3 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
+
+              {/* Filter 2: Location (Source: Dealer Code) */}
               <div className="relative">
-                <select className="appearance-none bg-white border border-slate-200 pl-3 pr-8 py-1.5 rounded text-xs font-medium text-slate-700 focus:outline-none focus:border-blue-400 shadow-sm min-w-[140px]" value={filters.location} onChange={e => setFilters({...filters, location: e.target.value})}>
+                <select 
+                  className="appearance-none bg-white border border-slate-200 pl-3 pr-8 py-1.5 rounded text-xs font-medium text-slate-700 focus:outline-none focus:border-blue-400 shadow-sm min-w-[140px]"
+                  value={filters.location}
+                  onChange={e => setFilters({...filters, location: e.target.value})}
+                >
                   <option value="All">All Locations</option>
                   {locationOptions.map(l => <option key={l} value={l}>{l}</option>)}
                 </select>
                 <ChevronDown className="w-3 h-3 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
+
+              {/* Filter 3: Consultant (Source: Assigned To) */}
               <div className="relative">
-                <select className="appearance-none bg-white border border-slate-200 pl-3 pr-8 py-1.5 rounded text-xs font-medium text-slate-700 focus:outline-none focus:border-blue-400 shadow-sm min-w-[160px]" value={filters.consultant} onChange={e => setFilters({...filters, consultant: e.target.value})}>
+                <select 
+                  className="appearance-none bg-white border border-slate-200 pl-3 pr-8 py-1.5 rounded text-xs font-medium text-slate-700 focus:outline-none focus:border-blue-400 shadow-sm min-w-[160px]"
+                  value={filters.consultant}
+                  onChange={e => setFilters({...filters, consultant: e.target.value})}
+                >
                   <option value="All">All Consultants</option>
                   {consultantOptions.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
                 <ChevronDown className="w-3 h-3 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
+
+              <div className="ml-auto flex items-center gap-3">
+                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">View:</span>
+                 <div className="flex items-center gap-2 bg-white rounded border border-slate-200 p-0.5">
+                   <button className="px-2 py-0.5 text-[10px] font-bold text-blue-700 bg-blue-50 rounded">CY</button>
+                   <button className="px-2 py-0.5 text-[10px] font-medium text-slate-400 hover:text-slate-600">LY</button>
+                 </div>
+                 <div className="flex items-center gap-2">
+                    <label className="text-[10px] text-slate-500 font-medium flex items-center gap-1 cursor-pointer">
+                      <input type="checkbox" className="rounded text-blue-600 focus:ring-0 w-3 h-3" defaultChecked /> Ratio
+                    </label>
+                    <label className="text-[10px] text-slate-500 font-medium flex items-center gap-1 cursor-pointer">
+                      <input type="checkbox" className="rounded text-blue-600 focus:ring-0 w-3 h-3" /> Benchmark
+                    </label>
+                 </div>
               </div>
            </div>
          </div>
@@ -528,6 +608,7 @@ export default function App() {
          {viewMode === 'detailed' && <DetailedView />}
          {viewMode === 'table' && <TableView />}
        </main>
+
     </div>
   );
 }
