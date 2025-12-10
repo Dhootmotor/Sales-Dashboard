@@ -69,8 +69,8 @@ const parseCSV = (text) => {
   let headerIndex = 0;
   for (let i = 0; i < Math.min(lines.length, 20); i++) {
     const rawLine = lines[i].toLowerCase();
-    // Check for known columns in either file type
-    if (rawLine.includes('id') || rawLine.includes('lead id') || rawLine.includes('order number') || rawLine.includes('mobile')) {
+    // Check for known columns in ANY file type (Opps, Leads, Inventory)
+    if (rawLine.includes('id') || rawLine.includes('lead id') || rawLine.includes('order number') || rawLine.includes('vehicle identification number') || rawLine.includes('model line')) {
       headerIndex = i;
       break;
     }
@@ -85,13 +85,13 @@ const parseCSV = (text) => {
     headers.forEach((h, i) => { if (h) row[h] = values[i] || ''; });
     // Also store original column names for specific lookups like "Dealer Code"
     rawHeaders.forEach((h, i) => {
-        const key = h.trim(); // Keep original casing/spacing for exact match
+        const key = h.trim(); 
         if (key) row[key] = values[i] || '';
     });
     return row;
   });
 
-  return { headers, rows, rawHeaders }; // Return rawHeaders for type detection
+  return { headers, rows, rawHeaders }; 
 };
 
 // --- COMPONENT: FILE UPLOAD WIZARD ---
@@ -123,7 +123,7 @@ const ImportWizard = ({ isOpen, onClose, onDataImported }) => {
         type = 'opportunities';
       } else if (headerString.includes('lead id') || headerString.includes('qualification level')) {
         type = 'leads';
-      } else if (headerString.includes('vin') || headerString.includes('stock')) {
+      } else if (headerString.includes('vehicle identification number') || headerString.includes('model sales code') || headerString.includes('primary status')) {
         type = 'inventory'; 
       }
 
@@ -152,7 +152,7 @@ const ImportWizard = ({ isOpen, onClose, onDataImported }) => {
         
         <div className="p-6 space-y-6">
           <div className="bg-blue-50 border border-blue-100 p-4 rounded-lg text-sm text-blue-800">
-             Upload <strong>"ListofOpportunities.csv"</strong> or <strong>"ListofLeadsCreatedinMarketing.csv"</strong>. <br/>
+             Upload <strong>"ListofOpportunities.csv"</strong>, <strong>"ListofLeads..."</strong> or <strong>"Inventory.csv"</strong>. <br/>
              <span className="text-xs mt-1 block text-slate-500">
                * Data is automatically saved to your browser storage. New uploads are merged with existing data (updates existing IDs, adds new ones).
              </span>
@@ -181,7 +181,7 @@ const ImportWizard = ({ isOpen, onClose, onDataImported }) => {
             className={`px-4 py-2 text-sm font-bold text-white rounded-lg flex items-center gap-2 ${processing || !file ? 'bg-slate-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
           >
             {processing ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Upload className="w-4 h-4" />}
-            {processing ? 'Upload & Merge'}
+            {processing ? 'Processing...' : 'Upload & Merge'}
           </button>
         </div>
       </div>
@@ -243,6 +243,7 @@ const ComparisonTable = ({ rows, headers, type = 'count', timestamp }) => (
 export default function App() {
   const [oppData, setOppData] = useState([]);
   const [leadData, setLeadData] = useState([]);
+  const [invData, setInvData] = useState([]); // State for Inventory
   const [showImport, setShowImport] = useState(false);
   const [viewMode, setViewMode] = useState('dashboard'); 
   const [detailedMetric, setDetailedMetric] = useState('Inquiries');
@@ -260,6 +261,7 @@ export default function App() {
     try {
       const savedOpp = localStorage.getItem('dashboard_oppData');
       const savedLead = localStorage.getItem('dashboard_leadData');
+      const savedInv = localStorage.getItem('dashboard_invData'); // Load Inventory
       const savedTimestamps = localStorage.getItem('dashboard_timestamps');
       
       if (savedOpp) {
@@ -268,6 +270,7 @@ export default function App() {
         updateMonthLabels(parsedOpp);
       }
       if (savedLead) setLeadData(JSON.parse(savedLead));
+      if (savedInv) setInvData(JSON.parse(savedInv));
       if (savedTimestamps) setTimestamps(JSON.parse(savedTimestamps));
     } catch (e) {
       console.error("Failed to load saved data", e);
@@ -311,14 +314,12 @@ export default function App() {
     
     if (type === 'opportunities') {
       setOppData(prev => {
-        // Merge logic: Map existing by ID, overwrite with new, then convert back to array
         const mergedMap = new Map(prev.map(item => [item['id'], item]));
         newData.forEach(item => {
-          if (item['id']) mergedMap.set(item['id'], item); // Update or Add
+          if (item['id']) mergedMap.set(item['id'], item); 
         });
         const finalData = Array.from(mergedMap.values());
         
-        // Save to Storage
         localStorage.setItem('dashboard_oppData', JSON.stringify(finalData));
         updateMonthLabels(finalData);
         return finalData;
@@ -335,7 +336,7 @@ export default function App() {
       setLeadData(prev => {
         const mergedMap = new Map(prev.map(item => [item['leadid'] || item['lead id'], item]));
         newData.forEach(item => {
-          const id = item['leadid'] || item['lead id'] || Math.random(); // Fallback ID
+          const id = item['leadid'] || item['lead id'] || Math.random(); 
           mergedMap.set(id, item);
         });
         const finalData = Array.from(mergedMap.values());
@@ -352,13 +353,25 @@ export default function App() {
       setSuccessMsg(`Merged ${newData.length} Leads`);
 
     } else if (type === 'inventory') {
-      // Logic for inventory if needed later
+      setInvData(prev => {
+        // ID for inventory is usually VIN
+        const mergedMap = new Map(prev.map(item => [item['Vehicle Identification Number'] || item['vehicleidentificationnumber'] || item['vin'], item]));
+        newData.forEach(item => {
+          const id = item['Vehicle Identification Number'] || item['vehicleidentificationnumber'] || item['vin'] || Math.random();
+          mergedMap.set(id, item);
+        });
+        const finalData = Array.from(mergedMap.values());
+        
+        localStorage.setItem('dashboard_invData', JSON.stringify(finalData));
+        return finalData;
+      });
+
       setTimestamps(prev => {
         const newTs = { ...prev, inventory: ts };
         localStorage.setItem('dashboard_timestamps', JSON.stringify(newTs));
         return newTs;
       });
-      setSuccessMsg(`Uploaded Inventory Data`);
+      setSuccessMsg(`Uploaded ${newData.length} Inventory Records`);
     }
     setTimeout(() => setSuccessMsg(''), 5000);
   };
@@ -367,9 +380,11 @@ export default function App() {
     if(window.confirm("Are you sure you want to clear all dashboard data?")) {
       localStorage.removeItem('dashboard_oppData');
       localStorage.removeItem('dashboard_leadData');
+      localStorage.removeItem('dashboard_invData');
       localStorage.removeItem('dashboard_timestamps');
       setOppData([]);
       setLeadData([]);
+      setInvData([]);
       setTimestamps({ opportunities: null, leads: null, inventory: null });
       window.location.reload();
     }
@@ -381,7 +396,7 @@ export default function App() {
       // Prioritize explicit keys from user request
       const itemLoc = (item['Dealer Code'] || item['dealercode'] || item['city'] || '').trim();
       const itemCons = (item['Assigned To'] || item['assignedto'] || item['owner'] || '').trim();
-      const itemModel = (item['modellinefe'] || '').trim();
+      const itemModel = (item['modellinefe'] || item['modelline'] || '').trim();
 
       const matchLoc = filters.location === 'All' || itemLoc === filters.location;
       const matchCons = filters.consultant === 'All' || itemCons === filters.consultant;
@@ -393,6 +408,7 @@ export default function App() {
 
   const filteredOppData = useMemo(() => getFilteredData(oppData), [oppData, filters]);
   const filteredLeadData = useMemo(() => getFilteredData(leadData), [leadData, filters]);
+  const filteredInvData = useMemo(() => getFilteredData(invData), [invData, filters]);
 
   // --- DERIVED METRICS ---
   
@@ -430,7 +446,30 @@ export default function App() {
     ];
   }, [filteredOppData, monthLabels]);
 
-  // 2. Lead Source
+  // 2. Inventory Stats (Real Calculation)
+  const inventoryStats = useMemo(() => {
+    const total = filteredInvData.length;
+    // Helper to check status safely
+    const checkStatus = (item, keywords) => {
+       const status = (item['Primary Status'] || item['primarystatus'] || '').toLowerCase();
+       return keywords.some(k => status.includes(k));
+    };
+
+    const open = filteredInvData.filter(d => checkStatus(d, ['initial', 'created', 'transit'])).length;
+    const booked = filteredInvData.filter(d => checkStatus(d, ['allotted', 'booked', 'blocked'])).length;
+    const wholesale = filteredInvData.filter(d => checkStatus(d, ['wholesale', 'invoice'])).length;
+    const ageing = filteredInvData.filter(d => parseInt(d['Ageing Days'] || d['ageingdays'] || '0') > 90).length;
+
+    return [
+      { label: 'Total Inventory', v1: 0, v2: total },
+      { label: 'Open Inventory', v1: 0, v2: open, sub2: total ? Math.round((open/total)*100)+'%' : '-' },
+      { label: 'Booked Inventory', v1: 0, v2: booked, sub2: total ? Math.round((booked/total)*100)+'%' : '-' },
+      { label: 'Wholesale', v1: 0, v2: wholesale },
+      { label: 'Ageing (>90D)', v1: 0, v2: ageing },
+    ];
+  }, [filteredInvData]);
+
+  // 3. Lead Source
   const sourceStats = useMemo(() => {
     // Prefer Lead File, fallback to Opp File
     const sourceDataset = filteredLeadData.length > 0 ? filteredLeadData : filteredOppData;
@@ -458,7 +497,7 @@ export default function App() {
 
   // --- FILTERS & OPTIONS (From Columns: Dealer Code & Assigned To) ---
   // Combine unique values from both datasets
-  const allDataForFilters = useMemo(() => [...oppData, ...leadData], [oppData, leadData]);
+  const allDataForFilters = useMemo(() => [...oppData, ...leadData, ...invData], [oppData, leadData, invData]);
   
   const locationOptions = useMemo(() => 
     [...new Set(allDataForFilters.map(d => d['Dealer Code'] || d['dealercode']).filter(Boolean))].sort(), 
@@ -469,7 +508,7 @@ export default function App() {
   [allDataForFilters]);
 
   const modelOptions = useMemo(() => 
-    [...new Set(allDataForFilters.map(d => d['modellinefe']).filter(Boolean))].sort(), 
+    [...new Set(allDataForFilters.map(d => d['modellinefe'] || d['Model Line']).filter(Boolean))].sort(), 
   [allDataForFilters]);
 
   // --- VIEW RENDERERS ---
@@ -491,13 +530,7 @@ export default function App() {
             <h3 className="font-bold text-slate-700">Inventory</h3>
           </div>
           <ComparisonTable 
-             rows={[
-               { label: 'Total Inventory', v1: 0, v2: 0 },
-               { label: 'Open Inventory', v1: 0, v2: 0 },
-               { label: 'Booked Inventory', v1: 0, v2: 0 },
-               { label: 'Wholesale', v1: 0, v2: 0 },
-               { label: 'Ageing (>90D)', v1: 0, v2: 0 },
-             ]} 
+             rows={inventoryStats} 
              headers={monthLabels} 
              timestamp={timestamps.inventory} 
            />
