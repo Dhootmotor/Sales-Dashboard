@@ -70,20 +70,24 @@ const parseCSV = (text) => {
   for (let i = 0; i < Math.min(lines.length, 20); i++) {
     const rawLine = lines[i].toLowerCase();
     // Check for known columns in ANY file type (Opps, Leads, Inventory)
-    if (rawLine.includes('id') || rawLine.includes('lead id') || rawLine.includes('order number') || rawLine.includes('vehicle identification number') || rawLine.includes('model line')) {
+    if (rawLine.includes('id') || rawLine.includes('lead id') || rawLine.includes('order number') || rawLine.includes('vehicle identification number') || rawLine.includes('company code')) {
       headerIndex = i;
       break;
     }
   }
 
   const rawHeaders = parseLine(lines[headerIndex]);
+  // Normalized headers for easier access (lowercase, no spaces)
   const headers = rawHeaders.map(h => h.toLowerCase().trim().replace(/[\s_().-]/g, ''));
   
   const rows = lines.slice(headerIndex + 1).map((line) => {
     const values = parseLine(line);
     const row = {};
+    
+    // Store using normalized keys (e.g. 'vehicleidentificationnumber')
     headers.forEach((h, i) => { if (h) row[h] = values[i] || ''; });
-    // Also store original column names for specific lookups like "Dealer Code"
+    
+    // Store using ORIGINAL keys (e.g. 'Vehicle Identification Number') for display/specific logic
     rawHeaders.forEach((h, i) => {
         const key = h.trim(); 
         if (key) row[key] = values[i] || '';
@@ -123,7 +127,7 @@ const ImportWizard = ({ isOpen, onClose, onDataImported }) => {
         type = 'opportunities';
       } else if (headerString.includes('lead id') || headerString.includes('qualification level')) {
         type = 'leads';
-      } else if (headerString.includes('vehicle identification number') || headerString.includes('model sales code') || headerString.includes('primary status')) {
+      } else if (headerString.includes('vehicle identification number') || headerString.includes('model sales code') || headerString.includes('company code')) {
         type = 'inventory'; 
       }
 
@@ -354,10 +358,10 @@ export default function App() {
 
     } else if (type === 'inventory') {
       setInvData(prev => {
-        // ID for inventory is usually VIN
-        const mergedMap = new Map(prev.map(item => [item['Vehicle Identification Number'] || item['vehicleidentificationnumber'] || item['vin'], item]));
+        // ID for inventory is usually VIN. Check for lowercase 'vehicleidentificationnumber' because parser lowercases keys.
+        const mergedMap = new Map(prev.map(item => [item['vehicleidentificationnumber'] || item['vin'], item]));
         newData.forEach(item => {
-          const id = item['Vehicle Identification Number'] || item['vehicleidentificationnumber'] || item['vin'] || Math.random();
+          const id = item['vehicleidentificationnumber'] || item['vin'] || Math.random();
           mergedMap.set(id, item);
         });
         const finalData = Array.from(mergedMap.values());
@@ -396,7 +400,7 @@ export default function App() {
       // Prioritize explicit keys from user request
       const itemLoc = (item['Dealer Code'] || item['dealercode'] || item['city'] || '').trim();
       const itemCons = (item['Assigned To'] || item['assignedto'] || item['owner'] || '').trim();
-      const itemModel = (item['modellinefe'] || item['modelline'] || '').trim();
+      const itemModel = (item['modellinefe'] || item['modelline'] || item['Model Line'] || '').trim();
 
       const matchLoc = filters.location === 'All' || itemLoc === filters.location;
       const matchCons = filters.consultant === 'All' || itemCons === filters.consultant;
@@ -449,7 +453,7 @@ export default function App() {
   // 2. Inventory Stats (Real Calculation)
   const inventoryStats = useMemo(() => {
     const total = filteredInvData.length;
-    // Helper to check status safely
+    // Helper to check status safely - check both normalized and original keys
     const checkStatus = (item, keywords) => {
        const status = (item['Primary Status'] || item['primarystatus'] || '').toLowerCase();
        return keywords.some(k => status.includes(k));
@@ -531,7 +535,7 @@ export default function App() {
           </div>
           <ComparisonTable 
              rows={inventoryStats} 
-             headers={monthLabels} 
+             headers={['', 'Total']} 
              timestamp={timestamps.inventory} 
            />
        </div>
@@ -679,14 +683,14 @@ export default function App() {
              </tr>
            </thead>
            <tbody className="divide-y divide-slate-100">
-             {(filteredOppData.length > 0 ? filteredOppData : filteredLeadData).slice(0, 100).map((row, idx) => (
+             {(filteredOppData.length > 0 ? filteredOppData : (filteredLeadData.length > 0 ? filteredLeadData : filteredInvData)).slice(0, 100).map((row, idx) => (
                <tr key={idx} className="hover:bg-blue-50/30">
-                 <td className="p-3 font-mono text-slate-500">{row['id'] || row['leadid']}</td>
-                 <td className="p-3">{row['customer'] || row['name']}</td>
-                 <td className="p-3">{row['mobile no.'] || row['customer phone']}</td>
-                 <td className="p-3"><span className="bg-slate-100 px-2 py-0.5 rounded border border-slate-200">{row['modellinefe']}</span></td>
-                 <td className="p-3">{row['createdon'] || row['createddate']}</td>
-                 <td className="p-3">{row['status'] || row['qualificationlevel']}</td>
+                 <td className="p-3 font-mono text-slate-500">{row['id'] || row['leadid'] || row['vehicleidentificationnumber'] || row['vin']}</td>
+                 <td className="p-3">{row['customer'] || row['name'] || '-'}</td>
+                 <td className="p-3">{row['mobile no.'] || row['customer phone'] || '-'}</td>
+                 <td className="p-3"><span className="bg-slate-100 px-2 py-0.5 rounded border border-slate-200">{row['modellinefe'] || row['modelline']}</span></td>
+                 <td className="p-3">{row['createdon'] || row['createddate'] || row['grndate']}</td>
+                 <td className="p-3">{row['status'] || row['qualificationlevel'] || row['primarystatus']}</td>
                </tr>
              ))}
            </tbody>
