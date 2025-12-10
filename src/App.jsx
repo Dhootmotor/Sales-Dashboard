@@ -76,6 +76,12 @@ const ImportWizard = ({ isOpen, onClose, onDataImported }) => {
   const [file, setFile] = useState(null);
   const [processing, setProcessing] = useState(false);
 
+  const handleFileChange = (e) => {
+    if (e.target.files[0]) {
+      setFile(e.target.files[0]);
+    }
+  };
+
   const processFiles = async () => {
     if (!file) return;
     setProcessing(true);
@@ -129,7 +135,7 @@ const ImportWizard = ({ isOpen, onClose, onDataImported }) => {
            <FileSpreadsheet className="w-10 h-10 text-blue-500 mb-2" />
            <p className="text-sm font-medium text-slate-600 mb-1">{file ? file.name : "Drag & Drop or Click to Select"}</p>
            <p className="text-xs text-slate-400">Supports: Opportunities, Leads, Inventory CSVs</p>
-           <input type="file" accept=".csv" onChange={(e) => setFile(e.target.files[0])} className="absolute inset-0 opacity-0 cursor-pointer" />
+           <input type="file" accept=".csv" onChange={handleFileChange} className="absolute inset-0 opacity-0 cursor-pointer" />
         </div>
 
         <button 
