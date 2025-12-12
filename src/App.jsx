@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Upload, Filter, TrendingUp, TrendingDown, 
   Users, Car, DollarSign, ChevronDown, FileSpreadsheet, 
   ArrowUpRight, ArrowDownRight, 
-  Clock, X, CheckCircle, Download, Trash2, Calendar, AlertTriangle
+  Clock, X, CheckCircle, Download, Trash2, Calendar, AlertTriangle, Database, HardDrive
 } from 'lucide-react';
 import { initializeApp } from "firebase/app";
 import { 
@@ -14,67 +14,46 @@ import {
 } from "firebase/firestore";
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "firebase/auth";
 
-// --- FIREBASE CONFIGURATION & SETUP ---
+// --- CONFIGURATION & SETUP ---
 let app, auth, db;
+let isFirebaseInitialized = false;
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
-// 1. SAFELY INITIALIZE FIREBASE
-// We check if the config exists (Canvas Env) or if we need to warn the user (Vercel/Local)
+// 1. SAFELY INITIALIZE FIREBASE (PREVENTS CRASHES ON VERCEL)
 try {
   let firebaseConfig = null;
-
+  // Check Canvas Environment
   if (typeof __firebase_config !== 'undefined') {
-    // CANVAS ENVIRONMENT: Use injected config
     firebaseConfig = JSON.parse(__firebase_config);
-  } else if (import.meta.env?.VITE_FIREBASE_CONFIG) {
-    // VERCEL/LOCAL: Use Environment Variable (Advanced)
-    // You can set VITE_FIREBASE_CONFIG in your Vercel Project Settings
+  } 
+  // Check Vercel Environment Variable (Optional for future)
+  else if (import.meta.env?.VITE_FIREBASE_CONFIG) {
     firebaseConfig = JSON.parse(import.meta.env.VITE_FIREBASE_CONFIG);
   }
 
-  // Initialize if we found a config
   if (firebaseConfig) {
     app = initializeApp(firebaseConfig);
     auth = getAuth(app);
     db = getFirestore(app);
+    isFirebaseInitialized = true;
   } else {
-    console.warn("Firebase Configuration not found. App running in offline/demo mode context.");
+    console.warn("Firebase config missing. Falling back to Local Storage mode.");
   }
 } catch (e) {
-  console.error("Firebase Initialization Error:", e);
+  console.error("Firebase Init Error:", e);
 }
 
 // --- STYLES ---
 const GlobalStyles = () => (
   <style>{`
-    ::-webkit-scrollbar {
-      width: 6px;
-      height: 6px;
-    }
-    ::-webkit-scrollbar-track {
-      background: #f1f5f9; 
-    }
-    ::-webkit-scrollbar-thumb {
-      background: #cbd5e1; 
-      border-radius: 3px;
-    }
-    ::-webkit-scrollbar-thumb:hover {
-      background: #94a3b8; 
-    }
-    .animate-fade-in {
-      animation: fadeIn 0.5s ease-out forwards;
-    }
-    .animate-fade-in-up {
-      animation: fadeInUp 0.5s ease-out forwards;
-    }
-    @keyframes fadeIn {
-      from { opacity: 0; }
-      to { opacity: 1; }
-    }
-    @keyframes fadeInUp {
-      from { opacity: 0; transform: translateY(10px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #f1f5f9; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    .animate-fade-in { animation: fadeIn 0.5s ease-out forwards; }
+    .animate-fade-in-up { animation: fadeInUp 0.5s ease-out forwards; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes fadeInUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
   `}</style>
 );
 
@@ -100,7 +79,6 @@ const parseCSV = (text) => {
     return result;
   };
 
-  // Robust Header Detection
   let headerIndex = 0;
   for (let i = 0; i < Math.min(lines.length, 20); i++) {
     const rawLine = lines[i].toLowerCase();
@@ -117,67 +95,73 @@ const parseCSV = (text) => {
     const values = parseLine(line);
     const row = {};
     headers.forEach((h, i) => { if (h) row[h] = values[i] || ''; });
-    // Also keep original keys for display matching
-    rawHeaders.forEach((h, i) => {
-        const key = h.trim(); 
-        if (key) row[key] = values[i] || '';
-    });
+    rawHeaders.forEach((h, i) => { const key = h.trim(); if (key) row[key] = values[i] || ''; });
     return row;
   });
 
   return { rows, rawHeaders }; 
 };
 
-// --- BATCH UPLOAD HELPER ---
-const batchUpload = async (userId, collectionName, data) => {
-  if (!db) throw new Error("Database not initialized");
-  
-  const batchSize = 400; 
-  const chunks = [];
-  
-  for (let i = 0; i < data.length; i += batchSize) {
-    chunks.push(data.slice(i, i + batchSize));
-  }
+// --- DATA HANDLERS (HYBRID) ---
 
+// 1. CLOUD UPLOAD (Batching)
+const batchUploadFirestore = async (userId, collectionName, data) => {
+  if (!db) throw new Error("Database not connected");
+  const batchSize = 400; 
   let totalUploaded = 0;
+  const chunks = [];
+  for (let i = 0; i < data.length; i += batchSize) chunks.push(data.slice(i, i + batchSize));
   
   for (const chunk of chunks) {
     const batch = writeBatch(db);
     const collectionRef = collection(db, 'artifacts', appId, 'users', userId, collectionName);
-    
     chunk.forEach(item => {
       let docId = '';
       if (collectionName === 'opportunities') docId = item['id'] || item['opportunityid'];
       else if (collectionName === 'leads') docId = item['leadid'] || item['lead id'];
       else if (collectionName === 'inventory') docId = item['vehicleidentificationnumber'] || item['vin'];
       
-      if (docId) {
-          docId = String(docId).replace(/\//g, '_'); 
-          const docRef = doc(collectionRef, docId);
-          batch.set(docRef, item, { merge: true });
-      } else {
-          const docRef = doc(collectionRef);
-          batch.set(docRef, item, { merge: true });
-      }
+      const docRef = docId ? doc(collectionRef, String(docId).replace(/\//g, '_')) : doc(collectionRef);
+      batch.set(docRef, item, { merge: true });
     });
-
     await batch.commit();
     totalUploaded += chunk.length;
   }
   return totalUploaded;
 };
 
-// --- COMPONENT: IMPORT WIZARD ---
-const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading }) => {
-  const [file, setFile] = useState(null);
+// 2. LOCAL MERGE (From Previous File Logic)
+const mergeLocalData = (currentData, newData, type) => {
+  let merged = [];
+  if (type === 'opportunities') {
+    const mergedMap = new Map(currentData.map(item => [item['id'], item]));
+    newData.forEach(item => { if (item['id']) mergedMap.set(item['id'], item); });
+    merged = Array.from(mergedMap.values());
+  } else if (type === 'leads') {
+    const mergedMap = new Map(currentData.map(item => [item['leadid'] || item['lead id'], item]));
+    newData.forEach(item => { 
+        const id = item['leadid'] || item['lead id'] || Math.random(); 
+        mergedMap.set(id, item); 
+    });
+    merged = Array.from(mergedMap.values());
+  } else if (type === 'inventory') {
+    const mergedMap = new Map(currentData.map(item => [item['vehicleidentificationnumber'] || item['vin'], item]));
+    newData.forEach(item => { 
+        const id = item['vehicleidentificationnumber'] || item['vin'] || Math.random(); 
+        mergedMap.set(id, item); 
+    });
+    merged = Array.from(mergedMap.values());
+  }
+  return merged;
+};
 
-  const handleFileChange = (e) => {
-    if (e.target.files[0]) setFile(e.target.files[0]);
-  };
+// --- COMPONENT: IMPORT WIZARD ---
+const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) => {
+  const [file, setFile] = useState(null);
+  const handleFileChange = (e) => { if (e.target.files[0]) setFile(e.target.files[0]); };
 
   const processFiles = async () => {
     if (!file) return;
-    
     const readFile = (f) => new Promise((resolve) => {
       const reader = new FileReader();
       reader.onload = (e) => resolve(parseCSV(e.target.result));
@@ -187,21 +171,15 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading }) => {
     try {
       const { rows, rawHeaders } = await readFile(file);
       const headerString = rawHeaders.join(',').toLowerCase();
-      
       let type = 'unknown';
-      if (headerString.includes('opportunity offline score') || headerString.includes('order number')) {
-        type = 'opportunities';
-      } else if (headerString.includes('lead id') || headerString.includes('qualification level')) {
-        type = 'leads';
-      } else if (headerString.includes('vehicle identification number') || headerString.includes('vin') || headerString.includes('company code')) {
-        type = 'inventory'; 
-      }
+      if (headerString.includes('opportunity offline score') || headerString.includes('order number')) type = 'opportunities';
+      else if (headerString.includes('lead id') || headerString.includes('qualification level')) type = 'leads';
+      else if (headerString.includes('vehicle identification number') || headerString.includes('vin')) type = 'inventory'; 
 
       await onDataImported(rows, type);
       setFile(null);
       onClose();
     } catch (error) {
-      console.error(error);
       alert("Error processing file: " + error.message);
     }
   };
@@ -213,43 +191,31 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading }) => {
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-xl overflow-hidden animate-fade-in-up">
         <div className="bg-slate-800 px-6 py-4 flex justify-between items-center">
           <h2 className="text-white font-bold text-lg flex items-center gap-2">
-            <Upload className="w-5 h-5" /> Import Data
+            <Upload className="w-5 h-5" /> Import Data ({mode === 'cloud' ? 'Cloud' : 'Local'})
           </h2>
           <button onClick={onClose} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
         </div>
         
         <div className="p-6 space-y-6">
-          <div className="bg-blue-50 border border-blue-100 p-4 rounded-lg text-sm text-blue-800">
-             Upload <strong>2024/2025 Data</strong>. <br/>
-             <span className="text-xs mt-1 block text-slate-500">
-               * Data is stored securely in the cloud database.
-             </span>
+          <div className={`p-4 rounded-lg text-sm ${mode === 'cloud' ? 'bg-blue-50 text-blue-800 border-blue-100' : 'bg-orange-50 text-orange-800 border-orange-100'}`}>
+             {mode === 'cloud' ? (
+                <>Upload <strong>2024/2025 Data</strong>. Unlimited storage securely in the cloud.</>
+             ) : (
+                <>Upload Data. <strong>Warning:</strong> Browser storage is limited (~5MB). Large files might fail.</>
+             )}
           </div>
 
           <div className="border-2 border-dashed border-slate-200 rounded-lg p-8 hover:border-blue-400 transition-colors bg-slate-50 relative group flex flex-col items-center justify-center text-center">
                 <FileSpreadsheet className="w-12 h-12 text-blue-600 mb-4" /> 
-                <div className="text-slate-700 font-semibold text-lg mb-1">
-                  {file ? file.name : "Click to Upload CSV"}
-                </div>
-                <p className="text-sm text-slate-400">Supported format: .csv</p>
-                <input 
-                  type="file" 
-                  accept=".csv"
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                  onChange={handleFileChange}
-                />
+                <div className="text-slate-700 font-semibold text-lg mb-1">{file ? file.name : "Click to Upload CSV"}</div>
+                <input type="file" accept=".csv" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onChange={handleFileChange} />
           </div>
         </div>
 
         <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-3">
           <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-200 rounded-lg">Cancel</button>
-          <button 
-            onClick={processFiles} 
-            disabled={isUploading || !file}
-            className={`px-4 py-2 text-sm font-bold text-white rounded-lg flex items-center gap-2 ${isUploading || !file ? 'bg-slate-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
-          >
-            {isUploading ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Upload className="w-4 h-4" />}
-            {isUploading ? 'Uploading...' : 'Upload & Sync'}
+          <button onClick={processFiles} disabled={isUploading || !file} className={`px-4 py-2 text-sm font-bold text-white rounded-lg flex items-center gap-2 ${isUploading || !file ? 'bg-slate-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}>
+            {isUploading ? 'Processing...' : (mode === 'cloud' ? 'Upload & Sync' : 'Merge & Save')}
           </button>
         </div>
       </div>
@@ -265,7 +231,6 @@ const ComparisonTable = ({ rows, headers, timestamp }) => (
         <thead className="text-[10px] uppercase text-slate-400 bg-white border-b border-slate-100 font-bold tracking-wider">
           <tr>
             <th className="py-2 pl-2 w-1/3">Metric</th>
-            {/* Headers: Aligned Right */}
             <th className="py-2 text-right w-[33%] px-2">{headers[0] || 'Prev'}</th>
             <th className="py-2 text-right w-[33%] px-2">{headers[1] || 'Curr'}</th>
           </tr>
@@ -275,29 +240,20 @@ const ComparisonTable = ({ rows, headers, timestamp }) => (
             const v1 = row.v1 || 0;
             const v2 = row.v2 || 0;
             const isUp = v2 >= v1;
-            
-            const format = (val, type) => {
-               if (type === 'currency') return `₹ ${(val/100000).toFixed(2)} L`;
-               return val.toLocaleString();
-            };
+            const format = (val, type) => type === 'currency' ? `₹ ${(val/100000).toFixed(2)} L` : val.toLocaleString();
 
             return (
               <tr key={idx} className="hover:bg-slate-50/80 transition-colors text-xs">
-                {/* Label */}
                 <td className="py-2.5 pl-2 font-semibold text-slate-600 flex items-center gap-2">
                    {isUp ? <ArrowUpRight className="w-3.5 h-3.5 text-emerald-500" /> : <ArrowDownRight className="w-3.5 h-3.5 text-rose-500" />}
                    {row.label}
                 </td>
-                
-                {/* Previous / Last Year Column */}
                 <td className="py-2.5 text-right text-slate-500 font-mono px-2">
                   <div className="flex flex-col items-end">
                     <span className="font-bold">{format(v1, row.type)}</span>
                     {row.sub1 && <span className="text-[10px] text-slate-400">({row.sub1})</span>}
                   </div>
                 </td>
-                
-                {/* Current Column */}
                 <td className="py-2.5 text-right font-bold text-slate-800 font-mono px-2">
                    <div className="flex flex-col items-end">
                     <span className="font-bold">{format(v2, row.type)}</span>
@@ -320,54 +276,74 @@ const ComparisonTable = ({ rows, headers, timestamp }) => (
 // --- MAIN APPLICATION ---
 export default function App() {
   const [user, setUser] = useState(null);
+  
+  // Data State
   const [oppData, setOppData] = useState([]);
   const [leadData, setLeadData] = useState([]);
   const [invData, setInvData] = useState([]);
   
+  // UI State
   const [showImport, setShowImport] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [viewMode, setViewMode] = useState('dashboard'); 
   const [detailedMetric, setDetailedMetric] = useState('Inquiries');
   const [successMsg, setSuccessMsg] = useState(''); 
-  
-  // Time View State: 'CY' (Last Month vs This Month) or 'LY' (Same Month Last Year vs This Month)
   const [timeView, setTimeView] = useState('CY'); 
-
-  // Filters
   const [filters, setFilters] = useState({ model: 'All', location: 'All', consultant: 'All' });
 
-  // --- AUTH & DATA FETCHING ---
-  useEffect(() => {
-    // Safety check: Don't run auth if Firebase isn't initialized (e.g., on Vercel without config)
-    if (!auth) return;
+  // Mode: 'cloud' (Firebase) or 'local' (LocalStorage)
+  const [storageMode, setStorageMode] = useState(isFirebaseInitialized ? 'cloud' : 'local');
 
-    const initAuth = async () => {
-      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-        await signInWithCustomToken(auth, __initial_auth_token);
-      } else {
-        await signInAnonymously(auth);
-      }
-    };
-    initAuth();
-    return onAuthStateChanged(auth, setUser);
+  // --- 1. INITIALIZATION ---
+  useEffect(() => {
+    if (isFirebaseInitialized && auth) {
+      const initAuth = async () => {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      };
+      initAuth();
+      return onAuthStateChanged(auth, setUser);
+    } else {
+      // If Firebase is missing, ensure we are in local mode
+      setStorageMode('local');
+    }
   }, []);
 
+  // --- 2. DATA FETCHING (HYBRID) ---
   useEffect(() => {
-    if (!user || !db) return;
+    // CLOUD MODE
+    if (storageMode === 'cloud' && user) {
+       const qOpp = query(collection(db, 'artifacts', appId, 'users', user.uid, 'opportunities'));
+       const unsubOpp = onSnapshot(qOpp, (snap) => setOppData(snap.docs.map(d => d.data())), e => console.log(e));
+       
+       const qLead = query(collection(db, 'artifacts', appId, 'users', user.uid, 'leads'));
+       const unsubLead = onSnapshot(qLead, (snap) => setLeadData(snap.docs.map(d => d.data())), e => console.log(e));
+       
+       const qInv = query(collection(db, 'artifacts', appId, 'users', user.uid, 'inventory'));
+       const unsubInv = onSnapshot(qInv, (snap) => setInvData(snap.docs.map(d => d.data())), e => console.log(e));
+       
+       return () => { unsubOpp(); unsubLead(); unsubInv(); };
+    } 
+    // LOCAL MODE
+    else if (storageMode === 'local') {
+       try {
+         const savedOpp = localStorage.getItem('dashboard_oppData');
+         const savedLead = localStorage.getItem('dashboard_leadData');
+         const savedInv = localStorage.getItem('dashboard_invData');
+         
+         if (savedOpp) setOppData(JSON.parse(savedOpp));
+         if (savedLead) setLeadData(JSON.parse(savedLead));
+         if (savedInv) setInvData(JSON.parse(savedInv));
+       } catch (e) {
+         console.error("Local Storage Load Error", e);
+       }
+    }
+  }, [user, storageMode]);
 
-    const qOpp = query(collection(db, 'artifacts', appId, 'users', user.uid, 'opportunities'));
-    const unsubOpp = onSnapshot(qOpp, (snap) => setOppData(snap.docs.map(d => d.data())), (e) => console.log(e));
-
-    const qLead = query(collection(db, 'artifacts', appId, 'users', user.uid, 'leads'));
-    const unsubLead = onSnapshot(qLead, (snap) => setLeadData(snap.docs.map(d => d.data())), (e) => console.log(e));
-
-    const qInv = query(collection(db, 'artifacts', appId, 'users', user.uid, 'inventory'));
-    const unsubInv = onSnapshot(qInv, (snap) => setInvData(snap.docs.map(d => d.data())), (e) => console.log(e));
-
-    return () => { unsubOpp(); unsubLead(); unsubInv(); };
-  }, [user]);
-
-  // --- ROBUST DATE HELPERS ---
+  // --- 3. ROBUST DATE HELPERS ---
   const getDateObj = (dateStr) => {
       if (!dateStr) return new Date(0);
       let d = new Date(dateStr);
@@ -386,7 +362,6 @@ export default function App() {
     return d.toLocaleString('default', { month: 'short', year: '2-digit' });
   };
 
-  // Determine Comparison Labels (Prev vs Curr)
   const timeLabels = useMemo(() => {
     if (oppData.length === 0) return { prevLabel: 'Prev', currLabel: 'Curr' };
     
@@ -413,16 +388,37 @@ export default function App() {
     return { prevLabel, currLabel };
   }, [oppData, timeView]);
 
-  // --- UPLOAD HANDLER ---
+  // --- 4. UPLOAD HANDLER (HYBRID) ---
   const handleDataImport = async (newData, type) => {
-    if (!user || !db) {
-        alert("Database not connected. Please see instructions.");
-        return;
-    }
     setIsUploading(true);
     try {
-      const count = await batchUpload(user.uid, type, newData);
-      setSuccessMsg(`Successfully synced ${count} ${type} to Database`);
+      if (storageMode === 'cloud') {
+         // Cloud Logic
+         if (!user) throw new Error("Authentication missing");
+         const count = await batchUploadFirestore(user.uid, type, newData);
+         setSuccessMsg(`Synced ${count} records to Cloud`);
+      } else {
+         // Local Logic (Merge & Save)
+         let current = [];
+         if (type === 'opportunities') current = oppData;
+         else if (type === 'leads') current = leadData;
+         else if (type === 'inventory') current = invData;
+
+         const merged = mergeLocalData(current, newData, type);
+         
+         // Save
+         if (type === 'opportunities') {
+             localStorage.setItem('dashboard_oppData', JSON.stringify(merged));
+             setOppData(merged);
+         } else if (type === 'leads') {
+             localStorage.setItem('dashboard_leadData', JSON.stringify(merged));
+             setLeadData(merged);
+         } else if (type === 'inventory') {
+             localStorage.setItem('dashboard_invData', JSON.stringify(merged));
+             setInvData(merged);
+         }
+         setSuccessMsg(`Merged ${newData.length} records Locally`);
+      }
       setTimeout(() => setSuccessMsg(''), 5000);
     } catch (e) {
       console.error("Upload failed", e);
@@ -433,24 +429,30 @@ export default function App() {
   };
 
   const clearData = async () => {
-    if(!user || !db) return;
-    if(window.confirm("This will delete ALL data from the database. Are you sure?")) {
-       const deleteColl = async (path) => {
-          const q = query(collection(db, 'artifacts', appId, 'users', user.uid, path), limit(500));
-          const snap = await getDocs(q);
-          const batch = writeBatch(db);
-          snap.docs.forEach(d => batch.delete(d.ref));
-          await batch.commit();
-       };
-       await deleteColl('opportunities');
-       await deleteColl('leads');
-       await deleteColl('inventory');
-       setSuccessMsg("Database Cleared");
+    if(window.confirm("Delete ALL data?")) {
+       if (storageMode === 'cloud' && user) {
+           const deleteColl = async (path) => {
+              const q = query(collection(db, 'artifacts', appId, 'users', user.uid, path), limit(500));
+              const snap = await getDocs(q);
+              const batch = writeBatch(db);
+              snap.docs.forEach(d => batch.delete(d.ref));
+              await batch.commit();
+           };
+           await deleteColl('opportunities');
+           await deleteColl('leads');
+           await deleteColl('inventory');
+       } else {
+           localStorage.removeItem('dashboard_oppData');
+           localStorage.removeItem('dashboard_leadData');
+           localStorage.removeItem('dashboard_invData');
+           setOppData([]); setLeadData([]); setInvData([]);
+       }
+       setSuccessMsg("Data Cleared");
        setTimeout(() => setSuccessMsg(''), 3000);
     }
   };
 
-  // --- FILTERED DATASETS ---
+  // --- FILTERS & DERIVED DATA ---
   const getFilteredData = (data) => {
     return data.filter(item => {
       const itemLoc = (item['Dealer Code'] || item['dealercode'] || item['city'] || '').trim();
@@ -468,36 +470,29 @@ export default function App() {
   const filteredOppData = useMemo(() => getFilteredData(oppData), [oppData, filters]);
   const filteredLeadData = useMemo(() => getFilteredData(leadData), [leadData, filters]);
   const filteredInvData = useMemo(() => getFilteredData(invData), [invData, filters]);
+  
+  const allDataForFilters = useMemo(() => [...oppData, ...leadData, ...invData], [oppData, leadData, invData]);
+  const locationOptions = useMemo(() => [...new Set(allDataForFilters.map(d => d['Dealer Code'] || d['dealercode']).filter(Boolean))].sort(), [allDataForFilters]);
+  const consultantOptions = useMemo(() => [...new Set(allDataForFilters.map(d => d['Assigned To'] || d['assignedto']).filter(Boolean))].sort(), [allDataForFilters]);
+  const modelOptions = useMemo(() => [...new Set(allDataForFilters.map(d => d['modellinefe'] || d['Model Line']).filter(Boolean))].sort(), [allDataForFilters]);
 
-  // --- DERIVED METRICS ---
-  // 1. Sales Funnel
+  // --- METRICS ---
   const funnelStats = useMemo(() => {
     if (!timeLabels.currLabel) return [];
-
     const getMonthData = (label) => filteredOppData.filter(d => getMonthStr(d['createdon'] || d['createddate']) === label);
     const currData = getMonthData(timeLabels.currLabel);
     const prevData = getMonthData(timeLabels.prevLabel);
-
     const getMetrics = (data) => {
       const inquiries = data.length;
-      const testDrives = data.filter(d => {
-        const val = (d['testdrivecompleted'] || '').toLowerCase();
-        return val === 'yes' || val === 'completed' || val === 'done';
-      }).length;
-      const hotLeads = data.filter(d => {
-        const score = parseInt(d['opportunityofflinescore'] || '0');
-        const status = (d['zqualificationlevel'] || d['status'] || '').toLowerCase();
-        return score > 80 || status.includes('hot');
-      }).length;
+      const testDrives = data.filter(d => { const val = (d['testdrivecompleted'] || '').toLowerCase(); return val === 'yes' || val === 'completed' || val === 'done'; }).length;
+      const hotLeads = data.filter(d => { const score = parseInt(d['opportunityofflinescore'] || '0'); const status = (d['zqualificationlevel'] || d['status'] || '').toLowerCase(); return score > 80 || status.includes('hot'); }).length;
       const bookings = data.filter(d => (d['ordernumber'] || '').trim() !== '').length;
       const retails = data.filter(d => (d['invoicedatev'] || '').trim() !== '').length;
       return { inquiries, testDrives, hotLeads, bookings, retails };
     };
-
     const c = getMetrics(currData);
     const p = getMetrics(prevData);
     const calcPct = (num, den) => den > 0 ? Math.round((num / den) * 100) + '%' : '0%';
-
     return [
       { label: 'Inquiries', v1: p.inquiries, sub1: '100%', v2: c.inquiries, sub2: '100%' },
       { label: 'Test-drives', v1: p.testDrives, sub1: calcPct(p.testDrives, p.inquiries), v2: c.testDrives, sub2: calcPct(c.testDrives, c.inquiries) },
@@ -507,22 +502,12 @@ export default function App() {
     ];
   }, [filteredOppData, timeLabels]);
 
-  // 2. Inventory Stats
   const inventoryStats = useMemo(() => {
     const total = filteredInvData.length;
-    const checkStatus = (item, keywords) => {
-       const status = (item['Primary Status'] || item['primarystatus'] || item['Description of Primary Status'] || '').toLowerCase();
-       return keywords.some(k => status.includes(k));
-    };
-
-    const open = filteredInvData.filter(d => {
-        const status = (d['Primary Status'] || d['primarystatus'] || '').toLowerCase();
-        return !status.includes('book') && !status.includes('allot') && !status.includes('block') && !status.includes('invoice');
-    }).length;
-
+    const checkStatus = (item, keywords) => { const status = (item['Primary Status'] || item['primarystatus'] || item['Description of Primary Status'] || '').toLowerCase(); return keywords.some(k => status.includes(k)); };
+    const open = filteredInvData.filter(d => { const status = (d['Primary Status'] || d['primarystatus'] || '').toLowerCase(); return !status.includes('book') && !status.includes('allot') && !status.includes('block') && !status.includes('invoice'); }).length;
     const booked = filteredInvData.filter(d => checkStatus(d, ['allotted', 'booked', 'blocked'])).length;
     const ageing = filteredInvData.filter(d => parseInt(d['Ageing Days'] || d['ageingdays'] || '0') > 90).length;
-
     return [
       { label: 'Total Inventory', v1: 0, v2: total },
       { label: 'Open Inventory', v1: 0, v2: open, sub2: total ? Math.round((open/total)*100)+'%' : '-' },
@@ -532,7 +517,6 @@ export default function App() {
     ];
   }, [filteredInvData]);
 
-  // 3. Lead Source
   const sourceStats = useMemo(() => {
     const sourceDataset = filteredLeadData.length > 0 ? filteredLeadData : filteredOppData;
     const currData = sourceDataset.filter(d => getMonthStr(d['createdon'] || d['createddate']) === timeLabels.currLabel);
@@ -542,39 +526,6 @@ export default function App() {
       .map(([label, val]) => ({ label, v1: 0, v2: val, sub2: currData.length ? Math.round((val/currData.length)*100)+'%' : '0%' }));
     return sorted.length ? sorted : [{label: 'No Data', v1:0, v2:0}];
   }, [filteredLeadData, filteredOppData, timeLabels]);
-
-  // --- FILTERS ---
-  const allDataForFilters = useMemo(() => [...oppData, ...leadData, ...invData], [oppData, leadData, invData]);
-  const locationOptions = useMemo(() => [...new Set(allDataForFilters.map(d => d['Dealer Code'] || d['dealercode']).filter(Boolean))].sort(), [allDataForFilters]);
-  const consultantOptions = useMemo(() => [...new Set(allDataForFilters.map(d => d['Assigned To'] || d['assignedto']).filter(Boolean))].sort(), [allDataForFilters]);
-  const modelOptions = useMemo(() => [...new Set(allDataForFilters.map(d => d['modellinefe'] || d['Model Line']).filter(Boolean))].sort(), [allDataForFilters]);
-
-  // --- SAFEGUARD UI FOR MISSING CONFIG (VERCEL) ---
-  if (!app) {
-     return (
-       <div className="min-h-screen flex items-center justify-center bg-slate-50 font-sans p-4">
-         <GlobalStyles />
-         <div className="bg-white p-8 rounded-xl shadow-lg max-w-lg text-center border border-red-100">
-           <div className="w-16 h-16 bg-red-50 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
-             <AlertTriangle className="w-8 h-8" />
-           </div>
-           <h2 className="text-xl font-bold text-slate-800 mb-2">Configuration Required</h2>
-           <p className="text-slate-500 mb-6 text-sm leading-relaxed">
-             This app is running outside the preview environment (e.g., on Vercel/Netlify), 
-             so it cannot access the internal database configuration.
-           </p>
-           <div className="bg-slate-100 p-4 rounded text-left text-xs font-mono text-slate-600 overflow-x-auto mb-6">
-             <p className="mb-2 text-slate-400 font-bold">How to fix for Vercel:</p>
-             <p>1. Go to your Firebase Console {'>'} Project Settings</p>
-             <p>2. Copy your valid JSON config object</p>
-             <p>3. In Vercel, add an Environment Variable:</p>
-             <p className="text-blue-600 mt-2">Key: VITE_FIREBASE_CONFIG</p>
-             <p className="text-blue-600">Value: &#123; "apiKey": "...", ... &#125;</p>
-           </div>
-         </div>
-       </div>
-     );
-  }
 
   // --- VIEWS ---
   const DashboardView = () => (
@@ -706,7 +657,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50/50 font-sans pb-10">
        <GlobalStyles />
-       <ImportWizard isOpen={showImport} onClose={() => setShowImport(false)} onDataImported={handleDataImport} isUploading={isUploading} />
+       <ImportWizard isOpen={showImport} onClose={() => setShowImport(false)} onDataImported={handleDataImport} isUploading={isUploading} mode={storageMode} />
 
        <header className="bg-white border-b border-slate-200 sticky top-0 z-40">
          <div className="max-w-[1920px] mx-auto px-4 h-16 flex items-center justify-between">
@@ -722,6 +673,12 @@ export default function App() {
            </div>
 
            <div className="flex items-center gap-4">
+              {/* Storage Mode Indicator */}
+              <div className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider border ${storageMode === 'cloud' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-orange-50 text-orange-700 border-orange-200'}`}>
+                 {storageMode === 'cloud' ? <Database className="w-3 h-3" /> : <HardDrive className="w-3 h-3" />}
+                 {storageMode === 'cloud' ? 'Cloud' : 'Local'}
+              </div>
+
               <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200">
                 <button onClick={() => setViewMode('dashboard')} className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${viewMode === 'dashboard' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Dashboard</button>
                 <button onClick={() => setViewMode('detailed')} className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${viewMode === 'detailed' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Analysis</button>
