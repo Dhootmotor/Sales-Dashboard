@@ -78,7 +78,7 @@ const parseCSV = (text) => {
   let headerIndex = 0;
   for (let i = 0; i < Math.min(lines.length, 20); i++) {
     const rawLine = lines[i].toLowerCase();
-    if (rawLine.includes('id') || rawLine.includes('lead id') || rawLine.includes('order number') || rawLine.includes('vehicle identification number') || rawLine.includes('vin') || rawLine.includes('company code')) {
+    if (rawLine.includes('id') || rawLine.includes('lead id') || rawLine.includes('order number') || rawLine.includes('vehicle identification number') || rawLine.includes('vin') || rawLine.includes('company code') || rawLine.includes('vehicle id no.')) {
       headerIndex = i;
       break;
     }
@@ -91,7 +91,15 @@ const parseCSV = (text) => {
   const rows = lines.slice(headerIndex + 1).map((line) => {
     const values = parseLine(line);
     const row = {};
-    headers.forEach((h, i) => { if (h) row[h] = values[i] || ''; });
+    headers.forEach((h, i) => { 
+        if (!h) return;
+        // Standardize VIN keys from different files to 'vin'
+        if (h === 'vehicleidentificationnumber' || h === 'vehicleidno') {
+            row['vin'] = values[i] || '';
+        } else {
+            row[h] = values[i] || ''; 
+        }
+    });
     // Keep original keys too just in case
     rawHeaders.forEach((h, i) => { const key = h.trim(); if (key) row[key] = values[i] || ''; });
     return row;
@@ -115,7 +123,7 @@ const batchUploadFirestore = async (userId, collectionName, data) => {
       let docId = '';
       if (collectionName === 'opportunities') docId = item['id'] || item['opportunityid'];
       else if (collectionName === 'leads') docId = item['leadid'] || item['lead id'];
-      else if (collectionName === 'inventory') docId = item['vehicleidentificationnumber'] || item['vin'];
+      else if (collectionName === 'inventory') docId = item['vin'] || item['vehicleidentificationnumber']; // Priority to normalized 'vin'
       
       const docRef = docId ? doc(collectionRef, String(docId).replace(/\//g, '_')) : doc(collectionRef);
       batch.set(docRef, item, { merge: true });
@@ -141,10 +149,10 @@ const mergeLocalData = (currentData, newData, type) => {
     });
     merged = Array.from(mergedMap.values());
   } else if (type === 'inventory') {
-    // Inventory usually uses VIN
-    const mergedMap = new Map(currentData.map(item => [item['vehicleidentificationnumber'] || item['vin'], item]));
+    // Inventory uses VIN - check for our normalized 'vin' first
+    const mergedMap = new Map(currentData.map(item => [item['vin'] || item['vehicleidentificationnumber'], item]));
     newData.forEach(item => { 
-        const id = item['vehicleidentificationnumber'] || item['vin'] || Math.random(); 
+        const id = item['vin'] || item['vehicleidentificationnumber'] || Math.random(); 
         mergedMap.set(id, item); 
     });
     merged = Array.from(mergedMap.values());
@@ -174,7 +182,7 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) =>
       if (headerString.includes('opportunity offline score') || headerString.includes('order number')) type = 'opportunities';
       else if (headerString.includes('lead id') || headerString.includes('qualification level')) type = 'leads';
       // Inventory detection: Look for standard inventory headers
-      else if (headerString.includes('vehicle identification number') || headerString.includes('vin') || headerString.includes('model sales code') || headerString.includes('ageing days')) type = 'inventory'; 
+      else if (headerString.includes('vehicle identification number') || headerString.includes('vin') || headerString.includes('model sales code') || headerString.includes('ageing days') || headerString.includes('vehicle id no.')) type = 'inventory'; 
 
       console.log("Detected Type:", type); // Debugging
       
@@ -451,6 +459,7 @@ export default function App() {
 
   const inventoryStats = useMemo(() => {
     // Inventory usually has headers like 'primarystatus', 'ageingdays' after normalization
+    // Use the normalized 'vin' key if available
     const total = filteredInvData.length;
     const checkStatus = (item, keywords) => { 
        // Check both normalized and original keys
