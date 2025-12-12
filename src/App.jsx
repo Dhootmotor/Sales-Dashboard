@@ -201,7 +201,11 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) =>
              {mode === 'cloud' ? (
                 <>Upload <strong>2024/2025 Data</strong>. Unlimited storage securely in the cloud.</>
              ) : (
-                <>Upload Data. <strong>Warning:</strong> Browser storage is limited (~5MB). Large files might fail.</>
+                <>
+                  <strong>Local Mode Active:</strong> Browser storage is limited (~5MB).<br/>
+                  ❌ Do not upload the entire 2024 year at once.<br/>
+                  ✅ Upload only the <strong>specific month</strong> you want to compare (e.g., Dec 2024).
+                </>
              )}
           </div>
 
@@ -223,16 +227,20 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) =>
   );
 };
 
-// --- COMPONENT: COMPARISON TABLE ---
+// --- COMPONENT: COMPARISON TABLE (UPDATED FOR SEPARATE % COLUMN) ---
 const ComparisonTable = ({ rows, headers, timestamp }) => (
   <div className="flex flex-col h-full">
     <div className="overflow-x-auto flex-1">
       <table className="w-full text-sm text-left border-collapse">
         <thead className="text-[10px] uppercase text-slate-400 bg-white border-b border-slate-100 font-bold tracking-wider">
           <tr>
-            <th className="py-2 pl-2 w-1/3">Metric</th>
-            <th className="py-2 text-right w-[33%] px-2">{headers[0] || 'Prev'}</th>
-            <th className="py-2 text-right w-[33%] px-2">{headers[1] || 'Curr'}</th>
+            <th className="py-2 pl-2 w-[28%]">Metric</th>
+            {/* Split Header for Previous */}
+            <th className="py-2 text-right w-[18%] px-1 border-l border-slate-50">{headers[0] || 'Prev'}</th>
+            <th className="py-2 text-right w-[18%] px-1 text-slate-300">%</th>
+            {/* Split Header for Current */}
+            <th className="py-2 text-right w-[18%] px-1 border-l border-slate-50">{headers[1] || 'Curr'}</th>
+            <th className="py-2 text-right w-[18%] px-1 text-slate-300">%</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-50">
@@ -240,25 +248,35 @@ const ComparisonTable = ({ rows, headers, timestamp }) => (
             const v1 = row.v1 || 0;
             const v2 = row.v2 || 0;
             const isUp = v2 >= v1;
-            const format = (val, type) => type === 'currency' ? `₹ ${(val/100000).toFixed(2)} L` : val.toLocaleString();
+            const format = (val, type) => {
+               if (type === 'currency') return `₹ ${(val/100000).toFixed(2)} L`;
+               return val.toLocaleString();
+            };
 
             return (
               <tr key={idx} className="hover:bg-slate-50/80 transition-colors text-xs">
-                <td className="py-2.5 pl-2 font-semibold text-slate-600 flex items-center gap-2">
-                   {isUp ? <ArrowUpRight className="w-3.5 h-3.5 text-emerald-500" /> : <ArrowDownRight className="w-3.5 h-3.5 text-rose-500" />}
-                   {row.label}
+                {/* Metric Name */}
+                <td className="py-2 pl-2 font-semibold text-slate-600 flex items-center gap-1.5 overflow-hidden text-ellipsis whitespace-nowrap">
+                   {isUp ? <ArrowUpRight className="w-3 h-3 text-emerald-500 shrink-0" /> : <ArrowDownRight className="w-3 h-3 text-rose-500 shrink-0" />}
+                   <span className="truncate" title={row.label}>{row.label}</span>
                 </td>
-                <td className="py-2.5 text-right text-slate-500 font-mono px-2">
-                  <div className="flex flex-col items-end">
-                    <span className="font-bold">{format(v1, row.type)}</span>
-                    {row.sub1 && <span className="text-[10px] text-slate-400">({row.sub1})</span>}
-                  </div>
+                
+                {/* Prev Value */}
+                <td className="py-2 text-right text-slate-500 font-mono px-1 border-l border-slate-50 border-dashed">
+                  {format(v1, row.type)}
                 </td>
-                <td className="py-2.5 text-right font-bold text-slate-800 font-mono px-2">
-                   <div className="flex flex-col items-end">
-                    <span className="font-bold">{format(v2, row.type)}</span>
-                    {row.sub2 && <span className="text-[10px] text-blue-600 font-semibold">({row.sub2})</span>}
-                  </div>
+                {/* Prev % */}
+                <td className="py-2 text-right text-slate-400 text-[10px] px-1">
+                  {row.sub1 || '-'}
+                </td>
+
+                {/* Curr Value */}
+                <td className="py-2 text-right font-bold text-slate-800 font-mono px-1 border-l border-slate-50 border-dashed">
+                   {format(v2, row.type)}
+                </td>
+                {/* Curr % */}
+                <td className="py-2 text-right text-blue-600 font-semibold text-[10px] px-1">
+                   {row.sub2 || '-'}
                 </td>
               </tr>
             );
@@ -565,6 +583,32 @@ export default function App() {
                {label: 'Insurance', v1: 0, v2: 0},
                {label: 'Exchange', v1: 0, v2: 0},
                {label: 'Accessories', v1: 0, v2: 0, type: 'currency'}
+           ]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} timestamp={true} />
+       </div>
+       {/* Card 5: Sales Management (RESTORED) */}
+       <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-4 flex flex-col h-full hover:shadow-md transition-shadow">
+          <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-2">
+            <div className="bg-orange-50 p-1.5 rounded text-orange-600"><Users className="w-4 h-4" /></div>
+            <h3 className="font-bold text-slate-700">Sales Management</h3>
+          </div>
+          <ComparisonTable rows={[
+               {label: 'Bookings', v1: 0, v2: funnelStats[3].v2},
+               {label: 'Dlr. Retail', v1: 0, v2: funnelStats[4].v2},
+               {label: 'OEM Retail', v1: 0, v2: 0},
+               {label: 'POC Sales', v1: 0, v2: 0}
+           ]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} timestamp={true} />
+       </div>
+       {/* Card 6: Profit (RESTORED) */}
+       <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-4 flex flex-col h-full hover:shadow-md transition-shadow">
+          <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-2">
+            <div className="bg-rose-50 p-1.5 rounded text-rose-600"><DollarSign className="w-4 h-4" /></div>
+            <h3 className="font-bold text-slate-700">Profit & Productivity</h3>
+          </div>
+          <ComparisonTable rows={[
+               {label: 'New car Margin', v1: 0, v2: 0, type: 'currency'},
+               {label: 'Margin per car', v1: 0, v2: 0},
+               {label: 'Used cars Margin', v1: 0, v2: 0, type: 'currency'},
+               {label: 'SC Productivity', v1: 0, v2: 0},
            ]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} timestamp={true} />
        </div>
     </div>
