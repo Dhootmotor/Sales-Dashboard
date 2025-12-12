@@ -8,35 +8,26 @@ import {
   ArrowUpRight, ArrowDownRight, 
   Clock, X, CheckCircle, Download, Trash2, Calendar, AlertTriangle, Database, HardDrive
 } from 'lucide-react';
-import { initializeApp } from "firebase/app";
-import { 
-  getFirestore, collection, onSnapshot, writeBatch, doc, query, orderBy, limit, deleteDoc, getDocs 
-} from "firebase/firestore";
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "firebase/auth";
+import { createClient } from '@supabase/supabase-js';
 
 // --- CONFIGURATION & SETUP ---
-let app, auth, db;
-let isFirebaseInitialized = false;
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+let supabase = null;
+let isSupabaseInitialized = false;
 
 try {
-  let firebaseConfig = null;
-  if (typeof __firebase_config !== 'undefined') {
-    firebaseConfig = JSON.parse(__firebase_config);
-  } else if (import.meta.env?.VITE_FIREBASE_CONFIG) {
-    firebaseConfig = JSON.parse(import.meta.env.VITE_FIREBASE_CONFIG);
-  }
+  // 1. Check for Environment Variables (Vercel/Local)
+  const supabaseUrl = import.meta.env?.VITE_SUPABASE_URL;
+  const supabaseKey = import.meta.env?.VITE_SUPABASE_ANON_KEY;
 
-  if (firebaseConfig) {
-    app = initializeApp(firebaseConfig);
-    auth = getAuth(app);
-    db = getFirestore(app);
-    isFirebaseInitialized = true;
+  if (supabaseUrl && supabaseKey) {
+    supabase = createClient(supabaseUrl, supabaseKey);
+    isSupabaseInitialized = true;
+    console.log("Supabase initialized successfully.");
   } else {
-    console.warn("Firebase config missing. Falling back to Local Storage mode.");
+    console.warn("Supabase credentials missing. App will default to Local Storage mode.");
   }
 } catch (e) {
-  console.error("Firebase Init Error:", e);
+  console.error("Supabase Init Error:", e);
 }
 
 // --- STYLES ---
@@ -78,6 +69,7 @@ const parseCSV = (text) => {
   let headerIndex = 0;
   for (let i = 0; i < Math.min(lines.length, 20); i++) {
     const rawLine = lines[i].toLowerCase();
+    // Robust detection including the specific Inventory headers you mentioned
     if (rawLine.includes('id') || rawLine.includes('lead id') || rawLine.includes('order number') || rawLine.includes('vehicle identification number') || rawLine.includes('vin') || rawLine.includes('company code') || rawLine.includes('vehicle id no.')) {
       headerIndex = i;
       break;
@@ -85,7 +77,7 @@ const parseCSV = (text) => {
   }
 
   const rawHeaders = parseLine(lines[headerIndex]);
-  // Normalize headers: remove spaces, special chars, and lowercase (e.g., "Ageing Days" -> "ageingdays")
+  // Normalize headers to remove spaces, special chars, and lowercase
   const headers = rawHeaders.map(h => h.toLowerCase().trim().replace(/[\s_().-]/g, ''));
   
   const rows = lines.slice(headerIndex + 1).map((line) => {
@@ -94,13 +86,17 @@ const parseCSV = (text) => {
     headers.forEach((h, i) => { 
         if (!h) return;
         // Standardize VIN keys from different files to 'vin'
-        if (h === 'vehicleidentificationnumber' || h === 'vehicleidno') {
+        if (h === 'vehicleidentificationnumber' || h === 'vehicleidno' || h === 'vin') {
             row['vin'] = values[i] || '';
+        } else if (h === 'ageingdays' || h === 'agingdays') {
+            row['ageingdays'] = values[i] || '0';
+        } else if (h === 'primarystatus' || h === 'descriptionofprimarystatus') {
+            row['primarystatus'] = values[i] || '';
         } else {
             row[h] = values[i] || ''; 
         }
     });
-    // Keep original keys too just in case
+    // Keep original keys too just in case they are needed for display
     rawHeaders.forEach((h, i) => { const key = h.trim(); if (key) row[key] = values[i] || ''; });
     return row;
   });
@@ -108,35 +104,62 @@ const parseCSV = (text) => {
   return { rows, rawHeaders }; 
 };
 
-// --- DATA HANDLERS ---
-const batchUploadFirestore = async (userId, collectionName, data) => {
-  if (!db) throw new Error("Database not connected");
-  const batchSize = 400; 
+// --- DATA HANDLERS (SUPABASE) ---
+const batchUploadSupabase = async (collectionName, data) => {
+  if (!supabase) throw new Error("Supabase not initialized");
+  
+  // NOTE: For flexibility with CSV columns, we map data to a JSONB column named 'data'
+  // and use the ID as the primary key.
+  // Tables required in Supabase: 'opportunities', 'leads', 'inventory'
+  // Columns required: id (text, PK), data (jsonb)
+
+  const batchSize = 100; // Supabase handles smaller batches well
   let totalUploaded = 0;
   const chunks = [];
   for (let i = 0; i < data.length; i += batchSize) chunks.push(data.slice(i, i + batchSize));
   
   for (const chunk of chunks) {
-    const batch = writeBatch(db);
-    const collectionRef = collection(db, 'artifacts', appId, 'users', userId, collectionName);
-    chunk.forEach(item => {
+    const formattedRows = chunk.map(item => {
       let docId = '';
       if (collectionName === 'opportunities') docId = item['id'] || item['opportunityid'];
       else if (collectionName === 'leads') docId = item['leadid'] || item['lead id'];
-      else if (collectionName === 'inventory') docId = item['vin'] || item['vehicleidentificationnumber']; // Priority to normalized 'vin'
+      else if (collectionName === 'inventory') docId = item['vin'] || item['vehicleidentificationnumber']; 
       
-      const docRef = docId ? doc(collectionRef, String(docId).replace(/\//g, '_')) : doc(collectionRef);
-      batch.set(docRef, item, { merge: true });
+      // Fallback ID if missing
+      if (!docId) docId = crypto.randomUUID();
+
+      return {
+        id: String(docId),
+        data: item // Store the whole CSV row in a JSONB column
+      };
     });
-    await batch.commit();
+
+    const { error } = await supabase.from(collectionName).upsert(formattedRows, { onConflict: 'id' });
+    
+    if (error) {
+      console.error("Supabase Upload Error:", error);
+      throw error;
+    }
+    
     totalUploaded += chunk.length;
   }
   return totalUploaded;
 };
 
+// Fetch Helper that unwraps the JSONB 'data' column
+const fetchSupabaseData = async (collectionName) => {
+  if (!supabase) return [];
+  const { data, error } = await supabase.from(collectionName).select('data');
+  if (error) {
+    console.error(`Error fetching ${collectionName}:`, error);
+    return [];
+  }
+  return data.map(row => row.data);
+};
+
+// --- DATA HANDLERS (LOCAL) ---
 const mergeLocalData = (currentData, newData, type) => {
   let merged = [];
-  // Standardize ID key based on type
   if (type === 'opportunities') {
     const mergedMap = new Map(currentData.map(item => [item['id'], item]));
     newData.forEach(item => { if (item['id']) mergedMap.set(item['id'], item); });
@@ -149,7 +172,6 @@ const mergeLocalData = (currentData, newData, type) => {
     });
     merged = Array.from(mergedMap.values());
   } else if (type === 'inventory') {
-    // Inventory uses VIN - check for our normalized 'vin' first
     const mergedMap = new Map(currentData.map(item => [item['vin'] || item['vehicleidentificationnumber'], item]));
     newData.forEach(item => { 
         const id = item['vin'] || item['vehicleidentificationnumber'] || Math.random(); 
@@ -178,14 +200,11 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) =>
       const headerString = rawHeaders.join(',').toLowerCase();
       let type = 'unknown';
       
-      // Improved Type Detection
       if (headerString.includes('opportunity offline score') || headerString.includes('order number')) type = 'opportunities';
       else if (headerString.includes('lead id') || headerString.includes('qualification level')) type = 'leads';
-      // Inventory detection: Look for standard inventory headers
       else if (headerString.includes('vehicle identification number') || headerString.includes('vin') || headerString.includes('model sales code') || headerString.includes('ageing days') || headerString.includes('vehicle id no.')) type = 'inventory'; 
 
-      console.log("Detected Type:", type); // Debugging
-      
+      console.log("Detected File Type:", type);
       await onDataImported(rows, type);
       setFile(null);
       onClose();
@@ -201,19 +220,21 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) =>
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-xl overflow-hidden animate-fade-in-up">
         <div className="bg-slate-800 px-6 py-4 flex justify-between items-center">
           <h2 className="text-white font-bold text-lg flex items-center gap-2">
-            <Upload className="w-5 h-5" /> Import Data ({mode === 'cloud' ? 'Cloud' : 'Local'})
+            <Upload className="w-5 h-5" /> Import Data ({mode === 'cloud' ? 'Supabase' : 'Local'})
           </h2>
           <button onClick={onClose} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
         </div>
         <div className="p-6 space-y-6">
-          <div className={`p-4 rounded-lg text-sm ${mode === 'cloud' ? 'bg-blue-50 text-blue-800 border-blue-100' : 'bg-orange-50 text-orange-800 border-orange-100'}`}>
+          <div className={`p-4 rounded-lg text-sm ${mode === 'cloud' ? 'bg-green-50 text-green-800 border-green-100' : 'bg-orange-50 text-orange-800 border-orange-100'}`}>
              {mode === 'cloud' ? (
-                <>Upload <strong>2024/2025 Data</strong>. Unlimited storage securely in the cloud.</>
+                <>
+                  ✅ <strong>Supabase Connected.</strong><br/>
+                  Upload unlimited 2024/2025 data. Ensure tables (opportunities, leads, inventory) exist in your project.
+                </>
              ) : (
                 <>
-                  <strong>Local Mode Active:</strong> Browser storage is limited (~5MB).<br/>
-                  ❌ Do not upload the entire 2024 year at once.<br/>
-                  ✅ Upload only the <strong>specific month</strong> you want to compare (e.g., Dec 2024).
+                  ⚠️ <strong>Local Storage Mode.</strong><br/>
+                  Browser storage is limited (~5MB). Upload only <strong>one month</strong> at a time to prevent crashes.
                 </>
              )}
           </div>
@@ -282,10 +303,10 @@ const ComparisonTable = ({ rows, headers, timestamp }) => (
 
 // --- MAIN APPLICATION ---
 export default function App() {
-  const [user, setUser] = useState(null);
   const [oppData, setOppData] = useState([]);
   const [leadData, setLeadData] = useState([]);
   const [invData, setInvData] = useState([]);
+  
   const [showImport, setShowImport] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [viewMode, setViewMode] = useState('dashboard'); 
@@ -293,46 +314,35 @@ export default function App() {
   const [successMsg, setSuccessMsg] = useState(''); 
   const [timeView, setTimeView] = useState('CY'); 
   const [filters, setFilters] = useState({ model: 'All', location: 'All', consultant: 'All' });
-  const [storageMode, setStorageMode] = useState(isFirebaseInitialized ? 'cloud' : 'local');
+  const [storageMode, setStorageMode] = useState(isSupabaseInitialized ? 'cloud' : 'local');
 
   useEffect(() => {
-    if (isFirebaseInitialized && auth) {
-      const initAuth = async () => {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
-      };
-      initAuth();
-      return onAuthStateChanged(auth, setUser);
-    } else {
-      setStorageMode('local');
-    }
+    setStorageMode(isSupabaseInitialized ? 'cloud' : 'local');
   }, []);
 
+  // DATA FETCHING
   useEffect(() => {
-    if (storageMode === 'cloud' && user) {
-       const qOpp = query(collection(db, 'artifacts', appId, 'users', user.uid, 'opportunities'));
-       const unsubOpp = onSnapshot(qOpp, (snap) => setOppData(snap.docs.map(d => d.data())), e => console.log(e));
-       const qLead = query(collection(db, 'artifacts', appId, 'users', user.uid, 'leads'));
-       const unsubLead = onSnapshot(qLead, (snap) => setLeadData(snap.docs.map(d => d.data())), e => console.log(e));
-       const qInv = query(collection(db, 'artifacts', appId, 'users', user.uid, 'inventory'));
-       const unsubInv = onSnapshot(qInv, (snap) => setInvData(snap.docs.map(d => d.data())), e => console.log(e));
-       return () => { unsubOpp(); unsubLead(); unsubInv(); };
-    } else if (storageMode === 'local') {
-       try {
-         const savedOpp = localStorage.getItem('dashboard_oppData');
-         const savedLead = localStorage.getItem('dashboard_leadData');
-         const savedInv = localStorage.getItem('dashboard_invData');
-         if (savedOpp) setOppData(JSON.parse(savedOpp));
-         if (savedLead) setLeadData(JSON.parse(savedLead));
-         if (savedInv) setInvData(JSON.parse(savedInv));
-       } catch (e) {
-         console.error("Local Storage Load Error", e);
-       }
-    }
-  }, [user, storageMode]);
+    const fetchData = async () => {
+      if (storageMode === 'cloud') {
+         const o = await fetchSupabaseData('opportunities');
+         const l = await fetchSupabaseData('leads');
+         const i = await fetchSupabaseData('inventory');
+         setOppData(o); setLeadData(l); setInvData(i);
+      } else {
+         try {
+           const savedOpp = localStorage.getItem('dashboard_oppData');
+           const savedLead = localStorage.getItem('dashboard_leadData');
+           const savedInv = localStorage.getItem('dashboard_invData');
+           if (savedOpp) setOppData(JSON.parse(savedOpp));
+           if (savedLead) setLeadData(JSON.parse(savedLead));
+           if (savedInv) setInvData(JSON.parse(savedInv));
+         } catch (e) {
+           console.error("Local Storage Load Error", e);
+         }
+      }
+    };
+    fetchData();
+  }, [storageMode]);
 
   // --- HELPERS ---
   const getDateObj = (dateStr) => {
@@ -369,9 +379,13 @@ export default function App() {
     setIsUploading(true);
     try {
       if (storageMode === 'cloud') {
-         if (!user) throw new Error("Authentication missing");
-         const count = await batchUploadFirestore(user.uid, type, newData);
-         setSuccessMsg(`Synced ${count} records to Cloud`);
+         const count = await batchUploadSupabase(type, newData);
+         setSuccessMsg(`Synced ${count} records to Supabase`);
+         // Trigger refresh
+         const data = await fetchSupabaseData(type);
+         if(type === 'opportunities') setOppData(data);
+         else if(type === 'leads') setLeadData(data);
+         else if(type === 'inventory') setInvData(data);
       } else {
          let current = [];
          if (type === 'opportunities') current = oppData;
@@ -393,20 +407,16 @@ export default function App() {
 
   const clearData = async () => {
     if(window.confirm("Delete ALL data?")) {
-       if (storageMode === 'cloud' && user) {
-           const deleteColl = async (path) => {
-              const q = query(collection(db, 'artifacts', appId, 'users', user.uid, path), limit(500));
-              const snap = await getDocs(q);
-              const batch = writeBatch(db);
-              snap.docs.forEach(d => batch.delete(d.ref));
-              await batch.commit();
-           };
-           await deleteColl('opportunities'); await deleteColl('leads'); await deleteColl('inventory');
+       if (storageMode === 'cloud') {
+           // For Supabase, usually we don't allow wipe from client, but here is logic if needed (requires RLS policy)
+           // await supabase.from('opportunities').delete().neq('id', 0);
+           alert("Data clearing in Cloud mode is restricted to Admin console.");
        } else {
            localStorage.removeItem('dashboard_oppData'); localStorage.removeItem('dashboard_leadData'); localStorage.removeItem('dashboard_invData');
            setOppData([]); setLeadData([]); setInvData([]);
+           setSuccessMsg("Local Data Cleared");
        }
-       setSuccessMsg("Data Cleared"); setTimeout(() => setSuccessMsg(''), 3000);
+       setTimeout(() => setSuccessMsg(''), 3000);
     }
   };
 
@@ -458,21 +468,17 @@ export default function App() {
   }, [filteredOppData, timeLabels]);
 
   const inventoryStats = useMemo(() => {
-    // Inventory usually has headers like 'primarystatus', 'ageingdays' after normalization
-    // Use the normalized 'vin' key if available
     const total = filteredInvData.length;
     const checkStatus = (item, keywords) => { 
-       // Check both normalized and original keys
-       const status = (item['primarystatus'] || item['Primary Status'] || item['description of primary status'] || '').toLowerCase();
+       const status = (item['primarystatus'] || item['Primary Status'] || item['descriptionofprimarystatus'] || '').toLowerCase();
        return keywords.some(k => status.includes(k));
     };
     const open = filteredInvData.filter(d => { 
         const status = (d['primarystatus'] || d['Primary Status'] || '').toLowerCase();
-        // Open if it does NOT contain these words
         return status && !status.includes('book') && !status.includes('allot') && !status.includes('block') && !status.includes('invoice');
     }).length;
     const booked = filteredInvData.filter(d => checkStatus(d, ['allotted', 'booked', 'blocked'])).length;
-    const ageing = filteredInvData.filter(d => parseInt(d['ageingdays'] || d['Ageing Days'] || '0') > 90).length;
+    const ageing = filteredInvData.filter(d => parseInt(d['ageingdays'] || '0') > 90).length;
     
     return [
       { label: 'Total Inventory', v1: 0, v2: total },
@@ -483,18 +489,15 @@ export default function App() {
     ];
   }, [filteredInvData]);
 
-  // FIX FOR LEAD SOURCE: Use Opportunity data if Lead data is missing
+  // FIX FOR LEAD SOURCE
   const sourceStats = useMemo(() => {
-    // If we have leads, use them. If not, fallback to opportunities which also have 'Source'
     const sourceDataset = filteredLeadData.length > 0 ? filteredLeadData : filteredOppData;
-    
     const currData = sourceDataset.filter(d => getMonthStr(d['createdon'] || d['createddate']) === timeLabels.currLabel);
     const counts = {};
     currData.forEach(d => { 
         const s = d['source'] || d['Source'] || 'Unknown'; 
         counts[s] = (counts[s] || 0) + 1; 
     });
-    
     const sorted = Object.entries(counts).sort(([,a], [,b]) => b - a).slice(0, 6)
       .map(([label, val]) => ({ 
           label, 
@@ -502,162 +505,8 @@ export default function App() {
           v2: val, 
           sub2: currData.length ? Math.round((val/currData.length)*100)+'%' : '0%' 
       }));
-      
     return sorted.length ? sorted : [{label: 'No Data', v1:0, v2:0}];
   }, [filteredLeadData, filteredOppData, timeLabels]);
-
-  // --- VIEWS ---
-  const DashboardView = () => (
-    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 animate-fade-in">
-       {/* Card 1: Sales Funnel */}
-       <div className={`rounded-lg shadow-sm border p-4 flex flex-col h-full hover:shadow-md transition-shadow cursor-pointer bg-white border-slate-200`} onClick={() => { setDetailedMetric('Inquiries'); setViewMode('detailed'); }}>
-          <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-2">
-            <div className="bg-blue-50 p-1.5 rounded text-blue-600"><LayoutDashboard className="w-4 h-4" /></div>
-            <h3 className="font-bold text-slate-700">Sales Funnel</h3>
-          </div>
-          <ComparisonTable rows={funnelStats} headers={[timeLabels.prevLabel, timeLabels.currLabel]} timestamp={true} />
-       </div>
-       {/* Card 2: Inventory */}
-       <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-4 flex flex-col h-full hover:shadow-md transition-shadow">
-          <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-2">
-            <div className="bg-indigo-50 p-1.5 rounded text-indigo-600"><Car className="w-4 h-4" /></div>
-            <h3 className="font-bold text-slate-700">Inventory</h3>
-          </div>
-          <ComparisonTable rows={inventoryStats} headers={['', 'Total']} timestamp={true} />
-       </div>
-       {/* Card 3: Lead Source */}
-       <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-4 flex flex-col h-full hover:shadow-md transition-shadow">
-          <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-2">
-            <div className="bg-emerald-50 p-1.5 rounded text-emerald-600"><TrendingUp className="w-4 h-4" /></div>
-            <h3 className="font-bold text-slate-700">Lead Source</h3>
-          </div>
-          <ComparisonTable rows={sourceStats} headers={[timeLabels.prevLabel, timeLabels.currLabel]} timestamp={true} />
-       </div>
-       {/* Card 4: Cross Sell */}
-       <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-4 flex flex-col h-full hover:shadow-md transition-shadow">
-          <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-2">
-            <div className="bg-purple-50 p-1.5 rounded text-purple-600"><FileSpreadsheet className="w-4 h-4" /></div>
-            <h3 className="font-bold text-slate-700">Cross-Sell</h3>
-          </div>
-          <ComparisonTable rows={[
-               {label: 'Car Finance', v1: 0, v2: 0},
-               {label: 'Insurance', v1: 0, v2: 0},
-               {label: 'Exchange', v1: 0, v2: 0},
-               {label: 'Accessories', v1: 0, v2: 0, type: 'currency'}
-           ]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} timestamp={true} />
-       </div>
-       {/* Card 5: Sales Management (RESTORED) */}
-       <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-4 flex flex-col h-full hover:shadow-md transition-shadow">
-          <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-2">
-            <div className="bg-orange-50 p-1.5 rounded text-orange-600"><Users className="w-4 h-4" /></div>
-            <h3 className="font-bold text-slate-700">Sales Management</h3>
-          </div>
-          <ComparisonTable rows={[
-               {label: 'Bookings', v1: 0, v2: funnelStats[3].v2},
-               {label: 'Dlr. Retail', v1: 0, v2: funnelStats[4].v2},
-               {label: 'OEM Retail', v1: 0, v2: 0},
-               {label: 'POC Sales', v1: 0, v2: 0}
-           ]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} timestamp={true} />
-       </div>
-       {/* Card 6: Profit (RESTORED) */}
-       <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-4 flex flex-col h-full hover:shadow-md transition-shadow">
-          <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-2">
-            <div className="bg-rose-50 p-1.5 rounded text-rose-600"><DollarSign className="w-4 h-4" /></div>
-            <h3 className="font-bold text-slate-700">Profit & Productivity</h3>
-          </div>
-          <ComparisonTable rows={[
-               {label: 'New car Margin', v1: 0, v2: 0, type: 'currency'},
-               {label: 'Margin per car', v1: 0, v2: 0},
-               {label: 'Used cars Margin', v1: 0, v2: 0, type: 'currency'},
-               {label: 'SC Productivity', v1: 0, v2: 0},
-           ]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} timestamp={true} />
-       </div>
-    </div>
-  );
-
-  const DetailedView = () => {
-    const consultantMix = useMemo(() => {
-        const counts = {};
-        filteredOppData.forEach(d => { const c = d['Assigned To'] || d['assignedto']; if(c) counts[c] = (counts[c] || 0) + 1; });
-        return Object.entries(counts).map(([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value);
-    }, [filteredOppData]);
-    const modelMix = useMemo(() => {
-        const counts = {};
-        filteredOppData.forEach(d => { const m = d['modellinefe']; if(m) counts[m] = (counts[m] || 0) + 1; });
-        return Object.entries(counts).map(([name, value]) => ({ name, value }));
-    }, [filteredOppData]);
-
-    return (
-      <div className="space-y-6 animate-fade-in">
-        <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200 flex items-center gap-3">
-          <button onClick={() => setViewMode('dashboard')} className="p-1 hover:bg-slate-100 rounded">
-             <ArrowDownRight className="w-5 h-5 text-slate-500 rotate-135" />
-          </button>
-          <div>
-            <h2 className="text-xl font-bold text-blue-700 flex items-center gap-2">{detailedMetric} Analysis</h2>
-            <p className="text-xs text-slate-400">Analysis based on filtered data</p>
-          </div>
-        </div>
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-           <div className="lg:col-span-2 bg-white p-6 rounded-lg shadow-sm border border-slate-200">
-             <h3 className="font-bold text-slate-700 mb-4">Consultant Performance</h3>
-             <div className="h-64">
-               <ResponsiveContainer width="100%" height="100%">
-                 <BarChart data={consultantMix} layout="vertical" margin={{left: 40}}>
-                   <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
-                   <XAxis type="number" hide />
-                   <YAxis dataKey="name" type="category" width={110} tick={{fontSize: 10}} axisLine={false} tickLine={false} />
-                   <RechartsTooltip cursor={{fill: '#f8fafc'}} />
-                   <Bar dataKey="value" fill="#6366f1" radius={[0, 4, 4, 0]} barSize={18} />
-                 </BarChart>
-               </ResponsiveContainer>
-             </div>
-           </div>
-           <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
-             <h3 className="font-bold text-slate-700 mb-4">Model Split</h3>
-             <div className="h-64">
-               <ResponsiveContainer width="100%" height="100%">
-                 <PieChart>
-                   <Pie data={modelMix} innerRadius={60} outerRadius={80} paddingAngle={2} dataKey="value">
-                     {modelMix.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
-                   </Pie>
-                   <RechartsTooltip />
-                   <Legend verticalAlign="bottom" height={36} iconType="circle" iconSize={8} />
-                 </PieChart>
-               </ResponsiveContainer>
-             </div>
-           </div>
-        </div>
-      </div>
-    );
-  };
-
-  const TableView = () => (
-    <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
-       <div className="p-4 border-b border-slate-100 flex justify-between items-center">
-          <h3 className="font-bold text-slate-700">Raw Data View</h3>
-       </div>
-       <div className="overflow-x-auto">
-         <table className="w-full text-left text-xs text-slate-600">
-           <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
-             <tr><th className="p-3">ID</th><th className="p-3">Customer</th><th className="p-3">Mobile</th><th className="p-3">Model</th><th className="p-3">Date</th><th className="p-3">Status</th></tr>
-           </thead>
-           <tbody className="divide-y divide-slate-100">
-             {(filteredOppData.length > 0 ? filteredOppData : (filteredLeadData.length > 0 ? filteredLeadData : filteredInvData)).slice(0, 50).map((row, idx) => (
-               <tr key={idx} className="hover:bg-blue-50/30">
-                 <td className="p-3 font-mono text-slate-500">{row['id'] || row['leadid'] || row['vin']}</td>
-                 <td className="p-3">{row['customer'] || row['name'] || '-'}</td>
-                 <td className="p-3">{row['mobile no.'] || row['customer phone'] || '-'}</td>
-                 <td className="p-3"><span className="bg-slate-100 px-2 py-0.5 rounded border border-slate-200">{row['modellinefe'] || row['modelline']}</span></td>
-                 <td className="p-3">{row['createdon'] || row['createddate'] || row['grndate']}</td>
-                 <td className="p-3">{row['status'] || row['qualificationlevel'] || row['primarystatus']}</td>
-               </tr>
-             ))}
-           </tbody>
-         </table>
-       </div>
-    </div>
-  );
 
   return (
     <div className="min-h-screen bg-slate-50/50 font-sans pb-10">
@@ -680,7 +529,7 @@ export default function App() {
            <div className="flex items-center gap-4">
               <div className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider border ${storageMode === 'cloud' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-orange-50 text-orange-700 border-orange-200'}`}>
                  {storageMode === 'cloud' ? <Database className="w-3 h-3" /> : <HardDrive className="w-3 h-3" />}
-                 {storageMode === 'cloud' ? 'Cloud' : 'Local'}
+                 {storageMode === 'cloud' ? 'Supabase' : 'Local'}
               </div>
               <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200">
                 <button onClick={() => setViewMode('dashboard')} className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${viewMode === 'dashboard' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Dashboard</button>
