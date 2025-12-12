@@ -19,15 +19,11 @@ let app, auth, db;
 let isFirebaseInitialized = false;
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
-// 1. SAFELY INITIALIZE FIREBASE (PREVENTS CRASHES ON VERCEL)
 try {
   let firebaseConfig = null;
-  // Check Canvas Environment
   if (typeof __firebase_config !== 'undefined') {
     firebaseConfig = JSON.parse(__firebase_config);
-  } 
-  // Check Vercel Environment Variable (Optional for future)
-  else if (import.meta.env?.VITE_FIREBASE_CONFIG) {
+  } else if (import.meta.env?.VITE_FIREBASE_CONFIG) {
     firebaseConfig = JSON.parse(import.meta.env.VITE_FIREBASE_CONFIG);
   }
 
@@ -89,12 +85,14 @@ const parseCSV = (text) => {
   }
 
   const rawHeaders = parseLine(lines[headerIndex]);
+  // Normalize headers: remove spaces, special chars, and lowercase (e.g., "Ageing Days" -> "ageingdays")
   const headers = rawHeaders.map(h => h.toLowerCase().trim().replace(/[\s_().-]/g, ''));
   
   const rows = lines.slice(headerIndex + 1).map((line) => {
     const values = parseLine(line);
     const row = {};
     headers.forEach((h, i) => { if (h) row[h] = values[i] || ''; });
+    // Keep original keys too just in case
     rawHeaders.forEach((h, i) => { const key = h.trim(); if (key) row[key] = values[i] || ''; });
     return row;
   });
@@ -102,9 +100,7 @@ const parseCSV = (text) => {
   return { rows, rawHeaders }; 
 };
 
-// --- DATA HANDLERS (HYBRID) ---
-
-// 1. CLOUD UPLOAD (Batching)
+// --- DATA HANDLERS ---
 const batchUploadFirestore = async (userId, collectionName, data) => {
   if (!db) throw new Error("Database not connected");
   const batchSize = 400; 
@@ -130,9 +126,9 @@ const batchUploadFirestore = async (userId, collectionName, data) => {
   return totalUploaded;
 };
 
-// 2. LOCAL MERGE (From Previous File Logic)
 const mergeLocalData = (currentData, newData, type) => {
   let merged = [];
+  // Standardize ID key based on type
   if (type === 'opportunities') {
     const mergedMap = new Map(currentData.map(item => [item['id'], item]));
     newData.forEach(item => { if (item['id']) mergedMap.set(item['id'], item); });
@@ -145,6 +141,7 @@ const mergeLocalData = (currentData, newData, type) => {
     });
     merged = Array.from(mergedMap.values());
   } else if (type === 'inventory') {
+    // Inventory usually uses VIN
     const mergedMap = new Map(currentData.map(item => [item['vehicleidentificationnumber'] || item['vin'], item]));
     newData.forEach(item => { 
         const id = item['vehicleidentificationnumber'] || item['vin'] || Math.random(); 
@@ -155,7 +152,7 @@ const mergeLocalData = (currentData, newData, type) => {
   return merged;
 };
 
-// --- COMPONENT: IMPORT WIZARD ---
+// --- IMPORT WIZARD ---
 const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) => {
   const [file, setFile] = useState(null);
   const handleFileChange = (e) => { if (e.target.files[0]) setFile(e.target.files[0]); };
@@ -172,10 +169,15 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) =>
       const { rows, rawHeaders } = await readFile(file);
       const headerString = rawHeaders.join(',').toLowerCase();
       let type = 'unknown';
+      
+      // Improved Type Detection
       if (headerString.includes('opportunity offline score') || headerString.includes('order number')) type = 'opportunities';
       else if (headerString.includes('lead id') || headerString.includes('qualification level')) type = 'leads';
-      else if (headerString.includes('vehicle identification number') || headerString.includes('vin')) type = 'inventory'; 
+      // Inventory detection: Look for standard inventory headers
+      else if (headerString.includes('vehicle identification number') || headerString.includes('vin') || headerString.includes('model sales code') || headerString.includes('ageing days')) type = 'inventory'; 
 
+      console.log("Detected Type:", type); // Debugging
+      
       await onDataImported(rows, type);
       setFile(null);
       onClose();
@@ -195,7 +197,6 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) =>
           </h2>
           <button onClick={onClose} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
         </div>
-        
         <div className="p-6 space-y-6">
           <div className={`p-4 rounded-lg text-sm ${mode === 'cloud' ? 'bg-blue-50 text-blue-800 border-blue-100' : 'bg-orange-50 text-orange-800 border-orange-100'}`}>
              {mode === 'cloud' ? (
@@ -208,14 +209,12 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) =>
                 </>
              )}
           </div>
-
           <div className="border-2 border-dashed border-slate-200 rounded-lg p-8 hover:border-blue-400 transition-colors bg-slate-50 relative group flex flex-col items-center justify-center text-center">
                 <FileSpreadsheet className="w-12 h-12 text-blue-600 mb-4" /> 
                 <div className="text-slate-700 font-semibold text-lg mb-1">{file ? file.name : "Click to Upload CSV"}</div>
                 <input type="file" accept=".csv" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onChange={handleFileChange} />
           </div>
         </div>
-
         <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-3">
           <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-200 rounded-lg">Cancel</button>
           <button onClick={processFiles} disabled={isUploading || !file} className={`px-4 py-2 text-sm font-bold text-white rounded-lg flex items-center gap-2 ${isUploading || !file ? 'bg-slate-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}>
@@ -227,7 +226,7 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) =>
   );
 };
 
-// --- COMPONENT: COMPARISON TABLE (UPDATED FOR SEPARATE % COLUMN) ---
+// --- COMPARISON TABLE ---
 const ComparisonTable = ({ rows, headers, timestamp }) => (
   <div className="flex flex-col h-full">
     <div className="overflow-x-auto flex-1">
@@ -235,10 +234,8 @@ const ComparisonTable = ({ rows, headers, timestamp }) => (
         <thead className="text-[10px] uppercase text-slate-400 bg-white border-b border-slate-100 font-bold tracking-wider">
           <tr>
             <th className="py-2 pl-2 w-[28%]">Metric</th>
-            {/* Split Header for Previous */}
             <th className="py-2 text-right w-[18%] px-1 border-l border-slate-50">{headers[0] || 'Prev'}</th>
             <th className="py-2 text-right w-[18%] px-1 text-slate-300">%</th>
-            {/* Split Header for Current */}
             <th className="py-2 text-right w-[18%] px-1 border-l border-slate-50">{headers[1] || 'Curr'}</th>
             <th className="py-2 text-right w-[18%] px-1 text-slate-300">%</th>
           </tr>
@@ -252,32 +249,16 @@ const ComparisonTable = ({ rows, headers, timestamp }) => (
                if (type === 'currency') return `₹ ${(val/100000).toFixed(2)} L`;
                return val.toLocaleString();
             };
-
             return (
               <tr key={idx} className="hover:bg-slate-50/80 transition-colors text-xs">
-                {/* Metric Name */}
                 <td className="py-2 pl-2 font-semibold text-slate-600 flex items-center gap-1.5 overflow-hidden text-ellipsis whitespace-nowrap">
                    {isUp ? <ArrowUpRight className="w-3 h-3 text-emerald-500 shrink-0" /> : <ArrowDownRight className="w-3 h-3 text-rose-500 shrink-0" />}
                    <span className="truncate" title={row.label}>{row.label}</span>
                 </td>
-                
-                {/* Prev Value */}
-                <td className="py-2 text-right text-slate-500 font-mono px-1 border-l border-slate-50 border-dashed">
-                  {format(v1, row.type)}
-                </td>
-                {/* Prev % */}
-                <td className="py-2 text-right text-slate-400 text-[10px] px-1">
-                  {row.sub1 || '-'}
-                </td>
-
-                {/* Curr Value */}
-                <td className="py-2 text-right font-bold text-slate-800 font-mono px-1 border-l border-slate-50 border-dashed">
-                   {format(v2, row.type)}
-                </td>
-                {/* Curr % */}
-                <td className="py-2 text-right text-blue-600 font-semibold text-[10px] px-1">
-                   {row.sub2 || '-'}
-                </td>
+                <td className="py-2 text-right text-slate-500 font-mono px-1 border-l border-slate-50 border-dashed">{format(v1, row.type)}</td>
+                <td className="py-2 text-right text-slate-400 text-[10px] px-1">{row.sub1 || '-'}</td>
+                <td className="py-2 text-right font-bold text-slate-800 font-mono px-1 border-l border-slate-50 border-dashed">{format(v2, row.type)}</td>
+                <td className="py-2 text-right text-blue-600 font-semibold text-[10px] px-1">{row.sub2 || '-'}</td>
               </tr>
             );
           })}
@@ -294,13 +275,9 @@ const ComparisonTable = ({ rows, headers, timestamp }) => (
 // --- MAIN APPLICATION ---
 export default function App() {
   const [user, setUser] = useState(null);
-  
-  // Data State
   const [oppData, setOppData] = useState([]);
   const [leadData, setLeadData] = useState([]);
   const [invData, setInvData] = useState([]);
-  
-  // UI State
   const [showImport, setShowImport] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [viewMode, setViewMode] = useState('dashboard'); 
@@ -308,11 +285,8 @@ export default function App() {
   const [successMsg, setSuccessMsg] = useState(''); 
   const [timeView, setTimeView] = useState('CY'); 
   const [filters, setFilters] = useState({ model: 'All', location: 'All', consultant: 'All' });
-
-  // Mode: 'cloud' (Firebase) or 'local' (LocalStorage)
   const [storageMode, setStorageMode] = useState(isFirebaseInitialized ? 'cloud' : 'local');
 
-  // --- 1. INITIALIZATION ---
   useEffect(() => {
     if (isFirebaseInitialized && auth) {
       const initAuth = async () => {
@@ -325,33 +299,24 @@ export default function App() {
       initAuth();
       return onAuthStateChanged(auth, setUser);
     } else {
-      // If Firebase is missing, ensure we are in local mode
       setStorageMode('local');
     }
   }, []);
 
-  // --- 2. DATA FETCHING (HYBRID) ---
   useEffect(() => {
-    // CLOUD MODE
     if (storageMode === 'cloud' && user) {
        const qOpp = query(collection(db, 'artifacts', appId, 'users', user.uid, 'opportunities'));
        const unsubOpp = onSnapshot(qOpp, (snap) => setOppData(snap.docs.map(d => d.data())), e => console.log(e));
-       
        const qLead = query(collection(db, 'artifacts', appId, 'users', user.uid, 'leads'));
        const unsubLead = onSnapshot(qLead, (snap) => setLeadData(snap.docs.map(d => d.data())), e => console.log(e));
-       
        const qInv = query(collection(db, 'artifacts', appId, 'users', user.uid, 'inventory'));
        const unsubInv = onSnapshot(qInv, (snap) => setInvData(snap.docs.map(d => d.data())), e => console.log(e));
-       
        return () => { unsubOpp(); unsubLead(); unsubInv(); };
-    } 
-    // LOCAL MODE
-    else if (storageMode === 'local') {
+    } else if (storageMode === 'local') {
        try {
          const savedOpp = localStorage.getItem('dashboard_oppData');
          const savedLead = localStorage.getItem('dashboard_leadData');
          const savedInv = localStorage.getItem('dashboard_invData');
-         
          if (savedOpp) setOppData(JSON.parse(savedOpp));
          if (savedLead) setLeadData(JSON.parse(savedLead));
          if (savedInv) setInvData(JSON.parse(savedInv));
@@ -361,16 +326,13 @@ export default function App() {
     }
   }, [user, storageMode]);
 
-  // --- 3. ROBUST DATE HELPERS ---
+  // --- HELPERS ---
   const getDateObj = (dateStr) => {
       if (!dateStr) return new Date(0);
       let d = new Date(dateStr);
       if (!isNaN(d.getTime())) return d;
       const parts = dateStr.match(/(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
-      if (parts) {
-         d = new Date(parts[3], parts[2] - 1, parts[1]);
-         if (!isNaN(d.getTime())) return d;
-      }
+      if (parts) { d = new Date(parts[3], parts[2] - 1, parts[1]); if (!isNaN(d.getTime())) return d; }
       return new Date(0);
   };
 
@@ -382,64 +344,39 @@ export default function App() {
 
   const timeLabels = useMemo(() => {
     if (oppData.length === 0) return { prevLabel: 'Prev', currLabel: 'Curr' };
-    
     let maxDate = new Date(0);
     oppData.forEach(d => {
         const date = getDateObj(d['createdon'] || d['createddate']);
         if (date > maxDate) maxDate = date;
     });
-
     if (maxDate.getTime() === 0) return { prevLabel: 'Prev', currLabel: 'Curr' };
-
     const currMonth = maxDate; 
     let prevMonth = new Date(currMonth);
-
-    if (timeView === 'CY') {
-        prevMonth.setMonth(currMonth.getMonth() - 1);
-    } else {
-        prevMonth.setFullYear(currMonth.getFullYear() - 1);
-    }
-
-    const currLabel = currMonth.toLocaleString('default', { month: 'short', year: '2-digit' });
-    const prevLabel = prevMonth.toLocaleString('default', { month: 'short', year: '2-digit' });
-
-    return { prevLabel, currLabel };
+    if (timeView === 'CY') { prevMonth.setMonth(currMonth.getMonth() - 1); } 
+    else { prevMonth.setFullYear(currMonth.getFullYear() - 1); }
+    return { prevLabel: prevMonth.toLocaleString('default', { month: 'short', year: '2-digit' }), currLabel: currMonth.toLocaleString('default', { month: 'short', year: '2-digit' }) };
   }, [oppData, timeView]);
 
-  // --- 4. UPLOAD HANDLER (HYBRID) ---
   const handleDataImport = async (newData, type) => {
     setIsUploading(true);
     try {
       if (storageMode === 'cloud') {
-         // Cloud Logic
          if (!user) throw new Error("Authentication missing");
          const count = await batchUploadFirestore(user.uid, type, newData);
          setSuccessMsg(`Synced ${count} records to Cloud`);
       } else {
-         // Local Logic (Merge & Save)
          let current = [];
          if (type === 'opportunities') current = oppData;
          else if (type === 'leads') current = leadData;
          else if (type === 'inventory') current = invData;
-
          const merged = mergeLocalData(current, newData, type);
-         
-         // Save
-         if (type === 'opportunities') {
-             localStorage.setItem('dashboard_oppData', JSON.stringify(merged));
-             setOppData(merged);
-         } else if (type === 'leads') {
-             localStorage.setItem('dashboard_leadData', JSON.stringify(merged));
-             setLeadData(merged);
-         } else if (type === 'inventory') {
-             localStorage.setItem('dashboard_invData', JSON.stringify(merged));
-             setInvData(merged);
-         }
+         if (type === 'opportunities') { localStorage.setItem('dashboard_oppData', JSON.stringify(merged)); setOppData(merged); }
+         else if (type === 'leads') { localStorage.setItem('dashboard_leadData', JSON.stringify(merged)); setLeadData(merged); }
+         else if (type === 'inventory') { localStorage.setItem('dashboard_invData', JSON.stringify(merged)); setInvData(merged); }
          setSuccessMsg(`Merged ${newData.length} records Locally`);
       }
       setTimeout(() => setSuccessMsg(''), 5000);
     } catch (e) {
-      console.error("Upload failed", e);
       alert("Upload failed: " + e.message);
     } finally {
       setIsUploading(false);
@@ -456,31 +393,24 @@ export default function App() {
               snap.docs.forEach(d => batch.delete(d.ref));
               await batch.commit();
            };
-           await deleteColl('opportunities');
-           await deleteColl('leads');
-           await deleteColl('inventory');
+           await deleteColl('opportunities'); await deleteColl('leads'); await deleteColl('inventory');
        } else {
-           localStorage.removeItem('dashboard_oppData');
-           localStorage.removeItem('dashboard_leadData');
-           localStorage.removeItem('dashboard_invData');
+           localStorage.removeItem('dashboard_oppData'); localStorage.removeItem('dashboard_leadData'); localStorage.removeItem('dashboard_invData');
            setOppData([]); setLeadData([]); setInvData([]);
        }
-       setSuccessMsg("Data Cleared");
-       setTimeout(() => setSuccessMsg(''), 3000);
+       setSuccessMsg("Data Cleared"); setTimeout(() => setSuccessMsg(''), 3000);
     }
   };
 
-  // --- FILTERS & DERIVED DATA ---
+  // --- FILTER & DATA LOGIC ---
   const getFilteredData = (data) => {
     return data.filter(item => {
       const itemLoc = (item['Dealer Code'] || item['dealercode'] || item['city'] || '').trim();
       const itemCons = (item['Assigned To'] || item['assignedto'] || item['owner'] || '').trim();
       const itemModel = (item['modellinefe'] || item['modelline'] || item['Model Line'] || '').trim();
-
       const matchLoc = filters.location === 'All' || itemLoc === filters.location;
       const matchCons = filters.consultant === 'All' || itemCons === filters.consultant;
       const matchModel = filters.model === 'All' || itemModel === filters.model;
-
       return matchLoc && matchCons && matchModel;
     });
   };
@@ -494,7 +424,6 @@ export default function App() {
   const consultantOptions = useMemo(() => [...new Set(allDataForFilters.map(d => d['Assigned To'] || d['assignedto']).filter(Boolean))].sort(), [allDataForFilters]);
   const modelOptions = useMemo(() => [...new Set(allDataForFilters.map(d => d['modellinefe'] || d['Model Line']).filter(Boolean))].sort(), [allDataForFilters]);
 
-  // --- METRICS ---
   const funnelStats = useMemo(() => {
     if (!timeLabels.currLabel) return [];
     const getMonthData = (label) => filteredOppData.filter(d => getMonthStr(d['createdon'] || d['createddate']) === label);
@@ -521,11 +450,21 @@ export default function App() {
   }, [filteredOppData, timeLabels]);
 
   const inventoryStats = useMemo(() => {
+    // Inventory usually has headers like 'primarystatus', 'ageingdays' after normalization
     const total = filteredInvData.length;
-    const checkStatus = (item, keywords) => { const status = (item['Primary Status'] || item['primarystatus'] || item['Description of Primary Status'] || '').toLowerCase(); return keywords.some(k => status.includes(k)); };
-    const open = filteredInvData.filter(d => { const status = (d['Primary Status'] || d['primarystatus'] || '').toLowerCase(); return !status.includes('book') && !status.includes('allot') && !status.includes('block') && !status.includes('invoice'); }).length;
+    const checkStatus = (item, keywords) => { 
+       // Check both normalized and original keys
+       const status = (item['primarystatus'] || item['Primary Status'] || item['description of primary status'] || '').toLowerCase();
+       return keywords.some(k => status.includes(k));
+    };
+    const open = filteredInvData.filter(d => { 
+        const status = (d['primarystatus'] || d['Primary Status'] || '').toLowerCase();
+        // Open if it does NOT contain these words
+        return status && !status.includes('book') && !status.includes('allot') && !status.includes('block') && !status.includes('invoice');
+    }).length;
     const booked = filteredInvData.filter(d => checkStatus(d, ['allotted', 'booked', 'blocked'])).length;
-    const ageing = filteredInvData.filter(d => parseInt(d['Ageing Days'] || d['ageingdays'] || '0') > 90).length;
+    const ageing = filteredInvData.filter(d => parseInt(d['ageingdays'] || d['Ageing Days'] || '0') > 90).length;
+    
     return [
       { label: 'Total Inventory', v1: 0, v2: total },
       { label: 'Open Inventory', v1: 0, v2: open, sub2: total ? Math.round((open/total)*100)+'%' : '-' },
@@ -535,13 +474,26 @@ export default function App() {
     ];
   }, [filteredInvData]);
 
+  // FIX FOR LEAD SOURCE: Use Opportunity data if Lead data is missing
   const sourceStats = useMemo(() => {
+    // If we have leads, use them. If not, fallback to opportunities which also have 'Source'
     const sourceDataset = filteredLeadData.length > 0 ? filteredLeadData : filteredOppData;
+    
     const currData = sourceDataset.filter(d => getMonthStr(d['createdon'] || d['createddate']) === timeLabels.currLabel);
     const counts = {};
-    currData.forEach(d => { const s = d['source'] || 'Unknown'; counts[s] = (counts[s] || 0) + 1; });
+    currData.forEach(d => { 
+        const s = d['source'] || d['Source'] || 'Unknown'; 
+        counts[s] = (counts[s] || 0) + 1; 
+    });
+    
     const sorted = Object.entries(counts).sort(([,a], [,b]) => b - a).slice(0, 6)
-      .map(([label, val]) => ({ label, v1: 0, v2: val, sub2: currData.length ? Math.round((val/currData.length)*100)+'%' : '0%' }));
+      .map(([label, val]) => ({ 
+          label, 
+          v1: 0, 
+          v2: val, 
+          sub2: currData.length ? Math.round((val/currData.length)*100)+'%' : '0%' 
+      }));
+      
     return sorted.length ? sorted : [{label: 'No Data', v1:0, v2:0}];
   }, [filteredLeadData, filteredOppData, timeLabels]);
 
@@ -717,12 +669,10 @@ export default function App() {
            </div>
 
            <div className="flex items-center gap-4">
-              {/* Storage Mode Indicator */}
               <div className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider border ${storageMode === 'cloud' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-orange-50 text-orange-700 border-orange-200'}`}>
                  {storageMode === 'cloud' ? <Database className="w-3 h-3" /> : <HardDrive className="w-3 h-3" />}
                  {storageMode === 'cloud' ? 'Cloud' : 'Local'}
               </div>
-
               <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200">
                 <button onClick={() => setViewMode('dashboard')} className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${viewMode === 'dashboard' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Dashboard</button>
                 <button onClick={() => setViewMode('detailed')} className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${viewMode === 'detailed' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Analysis</button>
