@@ -15,6 +15,7 @@ import {
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "firebase/auth";
 
 // --- FIREBASE CONFIGURATION & SETUP ---
+// We use the global variable provided by the environment
 const firebaseConfig = JSON.parse(__firebase_config);
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -122,15 +123,21 @@ const batchUpload = async (userId, collectionName, data) => {
     
     chunk.forEach(item => {
       let docId = '';
-      // Sanitize ID to ensure it is a valid path string
-      const sanitizeId = (id) => String(id).replace(/\//g, '_');
-
+      // Sanitize ID to ensure it is a valid path string. 
+      // Inventory usually has VIN, Opportunity has ID, Lead has LeadID
       if (collectionName === 'opportunities') docId = item['id'] || item['opportunityid'];
       else if (collectionName === 'leads') docId = item['leadid'] || item['lead id'];
       else if (collectionName === 'inventory') docId = item['vehicleidentificationnumber'] || item['vin'];
       
-      const docRef = docId ? doc(collectionRef, sanitizeId(docId)) : doc(collectionRef);
-      batch.set(docRef, item, { merge: true });
+      if (docId) {
+          docId = String(docId).replace(/\//g, '_'); // Safety
+          const docRef = doc(collectionRef, docId);
+          batch.set(docRef, item, { merge: true });
+      } else {
+          // If no ID, add as new doc
+          const docRef = doc(collectionRef);
+          batch.set(docRef, item, { merge: true });
+      }
     });
 
     await batch.commit();
@@ -192,9 +199,9 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading }) => {
         
         <div className="p-6 space-y-6">
           <div className="bg-blue-50 border border-blue-100 p-4 rounded-lg text-sm text-blue-800">
-             Upload <strong>2024/2025 Data</strong>. Large files are supported. <br/>
+             Upload <strong>2024/2025 Data</strong>. <br/>
              <span className="text-xs mt-1 block text-slate-500">
-               * Data is stored securely in the cloud database.
+               * Data is stored securely in the cloud database (Unlimited storage).
              </span>
           </div>
 
