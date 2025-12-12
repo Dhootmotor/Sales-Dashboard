@@ -299,8 +299,40 @@ const ComparisonTable = ({ rows, headers, timestamp }) => (
   </div>
 );
 
+// --- ERROR BOUNDARY ---
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error("Uncaught error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-red-50 p-4">
+          <div className="bg-white p-6 rounded-lg shadow-lg max-w-md border border-red-200">
+            <h2 className="text-xl font-bold text-red-600 mb-2">Something went wrong</h2>
+            <p className="text-sm text-slate-600 mb-4">The application crashed. Check console for details.</p>
+            <pre className="bg-slate-100 p-2 rounded text-xs overflow-auto max-h-40">{this.state.error?.toString()}</pre>
+            <button onClick={() => window.location.reload()} className="mt-4 px-4 py-2 bg-red-600 text-white rounded text-sm hover:bg-red-700">Reload Page</button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children; 
+  }
+}
+
 // --- MAIN APPLICATION ---
-export default function App() {
+function DashboardApp() {
   const [oppData, setOppData] = useState([]);
   const [leadData, setLeadData] = useState([]);
   const [invData, setInvData] = useState([]);
@@ -585,5 +617,13 @@ export default function App() {
          {viewMode === 'table' && <TableView />}
        </main>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <ErrorBoundary>
+      <DashboardApp />
+    </ErrorBoundary>
   );
 }
