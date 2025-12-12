@@ -108,8 +108,6 @@ const parseCSV = (text) => {
 const batchUploadSupabase = async (collectionName, data) => {
   if (!supabase) throw new Error("Supabase not initialized");
   
-  // NOTE: For flexibility with CSV columns, we map data to a JSONB column named 'data'
-  // and use the ID as the primary key.
   // Tables required in Supabase: 'opportunities', 'leads', 'inventory'
   // Columns required: id (text, PK), data (jsonb)
 
