@@ -228,11 +228,11 @@ const ComparisonTable = ({ rows, headers, updatedAt }) => (
     <table className="w-full text-xs text-left border-separate border-spacing-0">
       <thead className="text-[9px] uppercase text-slate-400 bg-slate-50/50 font-bold tracking-wider sticky top-0">
         <tr>
-          <th className="py-1 pl-2 w-[35%] border-b border-slate-100">Metric</th>
+          <th className="py-1 pl-2 w-[30%] border-b border-slate-100">Metric</th>
           <th className="py-1 text-right w-[15%] px-1 border-l border-b border-slate-100/50">{headers[0] || 'Prv'}</th>
-          <th className="py-1 text-right w-[15%] px-1 text-slate-300 border-b border-slate-100">%</th>
+          <th className="py-1 text-right w-[15%] px-1 text-slate-500 border-b border-slate-100 font-bold">%</th>
           <th className="py-1 text-right w-[15%] px-1 border-l border-b border-slate-100/50">{headers[1] || 'Cur'}</th>
-          <th className="py-1 text-right w-[15%] px-1 text-blue-400 border-b border-slate-100">%</th>
+          <th className="py-1 text-right w-[15%] px-1 text-blue-400 border-b border-slate-100 font-bold">%</th>
         </tr>
       </thead>
       <tbody className="divide-y divide-slate-50">
@@ -242,13 +242,13 @@ const ComparisonTable = ({ rows, headers, updatedAt }) => (
           return (
             <tr key={idx} className="hover:bg-slate-50/80 transition-colors group">
               <td className="py-1 pl-2 font-medium text-slate-600 flex items-center gap-1 truncate border-r border-slate-50/30">
-                 {isUp ? <ArrowUpRight className="w-2.5 h-2.5 text-emerald-500 shrink-0" /> : <ArrowDownRight className="w-2.5 h-2.5 text-rose-500 shrink-0" />}
-                 <span className="truncate text-[11px] leading-tight" title={row.label}>{row.label}</span>
+                 {isUp ? <ArrowUpRight className="w-2 h-2 text-emerald-500 shrink-0" /> : <ArrowDownRight className="w-2 h-2 text-rose-500 shrink-0" />}
+                 <span className="truncate text-[10px] leading-tight" title={row.label}>{row.label}</span>
               </td>
-              <td className="py-1 text-right text-slate-500 font-mono text-[10px] px-1">{format(v1, row.type)}</td>
-              <td className="py-1 text-right text-slate-300 text-[8px] px-1">{row.sub1 || '-'}</td>
-              <td className="py-1 text-right font-bold text-slate-900 font-mono text-[10px] px-1 border-l border-slate-50/50">{format(v2, row.type)}</td>
-              <td className="py-1 text-right text-blue-600 font-bold text-[9px] px-1">{row.sub2 || '-'}</td>
+              <td className="py-1 text-right text-slate-500 font-mono text-[9px] px-1">{format(v1, row.type)}</td>
+              <td className="py-1 text-right text-slate-600 text-[8px] px-1 font-bold">{row.sub1 || '-'}</td>
+              <td className="py-1 text-right font-bold text-slate-900 font-mono text-[9px] px-1 border-l border-slate-50/50">{format(v2, row.type)}</td>
+              <td className="py-1 text-right text-blue-600 font-bold text-[8px] px-1">{row.sub2 || '-'}</td>
             </tr>
           );
         })}
@@ -268,9 +268,7 @@ export default function App() {
   const [invData, setInvData] = useState([]);
   const [bookingData, setBookingData] = useState([]);
   
-  // Separation of timestamps state
   const [timestamps, setTimestamps] = useState({ opportunities: null, leads: null, inventory: null, bookings: null });
-  
   const [showImport, setShowImport] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [viewMode, setViewMode] = useState('dashboard'); 
@@ -329,14 +327,24 @@ export default function App() {
   const getMonthStr = (dateStr) => { const d = getDateObj(dateStr); return d.getTime() === 0 ? 'Unknown' : d.toLocaleString('default', { month: 'short', year: '2-digit' }); };
 
   const timeLabels = useMemo(() => {
-    if (oppData.length === 0) return { prevLabel: 'Prv', currLabel: 'Cur' };
-    let maxDate = new Date(0); oppData.forEach(d => { const date = getDateObj(getVal(d, ['createdon', 'createddate'])); if (date > maxDate) maxDate = date; });
-    if (maxDate.getTime() === 0) return { prevLabel: 'Prv', currLabel: 'Cur' };
-    const currMonth = maxDate; let prevMonth = new Date(currMonth);
+    // Collect all dates to find the actual system max
+    const allDates = [...oppData, ...leadData, ...bookingData, ...invData]
+      .map(d => getDateObj(getVal(d, ['createdon', 'createddate', 'GRN Date', 'Billing Date'])))
+      .filter(d => d.getTime() > 0);
+
+    if (allDates.length === 0) return { prevLabel: 'Prv', currLabel: 'Cur' };
+    
+    const maxDate = new Date(Math.max(...allDates));
+    const currMonth = maxDate; 
+    let prevMonth = new Date(currMonth);
     if (timeView === 'CY') prevMonth.setMonth(currMonth.getMonth() - 1);
     else prevMonth.setFullYear(currMonth.getFullYear() - 1);
-    return { currLabel: currMonth.toLocaleString('default', { month: 'short', year: '2-digit' }), prevLabel: prevMonth.toLocaleString('default', { month: 'short', year: '2-digit' }) };
-  }, [oppData, timeView]);
+    
+    return { 
+      currLabel: currMonth.toLocaleString('default', { month: 'short', year: '2-digit' }), 
+      prevLabel: prevMonth.toLocaleString('default', { month: 'short', year: '2-digit' }) 
+    };
+  }, [oppData, leadData, bookingData, invData, timeView]);
 
   const handleDataImport = async (newData, type, overwrite) => {
     setIsUploading(true); const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -347,7 +355,13 @@ export default function App() {
         const { data } = await supabase.from(type).select('*').eq('user_id', user.id);
         if (type === 'opportunities') setOppData(data); else if (type === 'leads') setLeadData(data); else if (type === 'inventory') setInvData(data); else if (type === 'bookings') setBookingData(data);
       } else {
-        let current = []; if (!overwrite) { if (type === 'opportunities') current = oppData; else if (type === 'leads') current = leadData; else if (type === 'inventory') current = invData; else if (type === 'bookings') current = bookingData; }
+        let current = []; 
+        if (!overwrite) { 
+           if (type === 'opportunities') current = oppData; 
+           else if (type === 'leads') current = leadData; 
+           else if (type === 'inventory') current = invData; 
+           else if (type === 'bookings') current = bookingData; 
+        }
         const merged = mergeLocalData(current, newData, type);
         localStorage.setItem(`dashboard_${type}Data`, JSON.stringify(merged));
         if (type === 'opportunities') setOppData(merged); else if (type === 'leads') setLeadData(merged); else if (type === 'inventory') setInvData(merged); else if (type === 'bookings') setBookingData(merged);
@@ -363,13 +377,10 @@ export default function App() {
           await supabase.from('leads').delete().eq('user_id', user.id);
           await supabase.from('inventory').delete().eq('user_id', user.id);
           await supabase.from('bookings').delete().eq('user_id', user.id);
-       } else {
-          localStorage.clear();
-       }
+       } else localStorage.clear();
        setOppData([]); setLeadData([]); setInvData([]); setBookingData([]);
        setTimestamps({opportunities: null, leads: null, inventory: null, bookings: null});
-       setSuccessMsg("Cleared.");
-       setTimeout(() => setSuccessMsg(''), 3000);
+       setSuccessMsg("Cleared."); setTimeout(() => setSuccessMsg(''), 3000);
     }
   };
 
@@ -431,25 +442,29 @@ export default function App() {
     };
 
     const getStatsForMonth = (monthLabel) => {
-      const dataForMonth = filteredInvData.filter(d => {
-        const grnMonth = getMonthStr(getVal(d, ['GRN Date']));
-        // For Curr month, we include all data. For Prev month, we only include GRNs up to then.
+      const targetDate = getDateObj(monthLabel);
+      const dataInPeriod = filteredInvData.filter(d => {
+        const grnDate = getDateObj(getVal(d, ['GRN Date']));
+        // For current view, we see everything. For historical, we only see GRNs up to that point.
         if (monthLabel === timeLabels.currLabel) return true;
-        return grnMonth === monthLabel || getDateObj(getVal(d, ['GRN Date'])) < getDateObj(monthLabel);
+        return grnDate <= targetDate;
       });
       
-      const total = dataForMonth.length;
-      const bookedCount = dataForMonth.filter(checkIsBooked).length;
+      const total = dataInPeriod.length;
+      const bookedCount = dataInPeriod.filter(checkIsBooked).length;
       const openCount = total - bookedCount;
-      const openingStock = dataForMonth.filter(d => getMonthStr(getVal(d, ['GRN Date'])) !== monthLabel && !checkIsBooked(d)).length;
-      const ageing90 = dataForMonth.filter(d => parseInt(getVal(d, ['Ageing Days']) || '0') > 90).length;
+      const openingStock = dataInPeriod.filter(d => {
+        const grnDate = getDateObj(getVal(d, ['GRN Date']));
+        const mStart = new Date(targetDate.getFullYear(), targetDate.getMonth(), 1);
+        return grnDate < mStart && !checkIsBooked(d);
+      }).length;
+      const ageing90 = dataInPeriod.filter(d => parseInt(getVal(d, ['Ageing Days']) || '0') > 90).length;
 
       return { total, openCount, bookedCount, openingStock, ageing90 };
     };
 
     const c = getStatsForMonth(timeLabels.currLabel);
     const p = getStatsForMonth(timeLabels.prevLabel);
-
     const calcPct = (num, den) => den > 0 ? Math.round((num / den) * 100) + '%' : '0%';
 
     return [
@@ -463,7 +478,7 @@ export default function App() {
 
   const financeEfficiencyStats = useMemo(() => {
     const retails = filteredBks.filter(b => getVal(b, ['Billing Date', 'Invoice number']).trim() !== '').length;
-    const financed = filteredBks.filter(b => getVal(b, ['Financier', 'Financier Name']).trim() !== '').length;
+    const financed = filteredBks.filter(b => getVal(b, ['Financier']).trim() !== '').length;
     const insured = filteredBks.filter(b => getVal(b, ['Insurance Company']).trim() !== '').length;
     const scCount = new Set(filteredOppData.map(o => getVal(o, ['Assigned To']))).size || 1;
     return {
@@ -476,8 +491,8 @@ export default function App() {
       efficiency: [
         { label: 'Retails / SC', v1: 0, v2: (retails / scCount).toFixed(1) },
         { label: 'Total Retails', v1: 0, v2: retails },
-        { label: 'Margin / Unit', v1: 0, v2: 0, type: 'currency' },
-        { label: 'System Margin', v1: 0, v2: 0, type: 'currency' }
+        { label: 'Revenue Pool', v1: 0, v2: 0, type: 'currency' },
+        { label: 'Margin Pool', v1: 0, v2: 0, type: 'currency' }
       ]
     };
   }, [filteredBks, filteredOppData]);
@@ -488,41 +503,6 @@ export default function App() {
     const counts = {}; currData.forEach(d => { const s = getVal(d, ['source']) || 'Other'; counts[s] = (counts[s] || 0) + 1; });
     return Object.entries(counts).sort(([,a], [,b]) => b - a).slice(0, 5).map(([label, val]) => ({ label, v1: 0, v2: val, sub2: currData.length ? Math.round((val/currData.length)*100)+'%' : '0%' }));
   }, [leadData, oppData, timeLabels]);
-
-  // --- VIEWS ---
-  const DashboardView = () => (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5 animate-fade-in">
-       <div className="bg-white rounded-lg card-shadow p-2 flex flex-col hover:border-blue-200 border border-transparent transition-all group cursor-pointer" onClick={() => { setDetailedMetric('Inquiries'); setViewMode('detailed'); }}>
-          <div className="flex items-center gap-1.5 mb-1 border-b border-slate-50 pb-0.5"><LayoutDashboard className="w-3 h-3 text-blue-600" /><h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Sales Funnel</h3></div>
-          <ComparisonTable rows={funnelStats} headers={[timeLabels.prevLabel, timeLabels.currLabel]} updatedAt={timestamps.opportunities} />
-       </div>
-       <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
-          <div className="flex items-center gap-1.5 mb-1 border-b border-slate-50 pb-0.5"><Car className="w-3 h-3 text-indigo-600" /><h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Stock & Booked</h3></div>
-          <ComparisonTable rows={inventoryStats} headers={[timeLabels.prevLabel, timeLabels.currLabel]} updatedAt={timestamps.inventory} />
-       </div>
-       <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
-          <div className="flex items-center gap-1.5 mb-1 border-b border-slate-50 pb-0.5"><TrendingUp className="w-3 h-3 text-emerald-600" /><h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Top Channels</h3></div>
-          <ComparisonTable rows={sourceStats.length ? sourceStats : [{label: 'No Data', v1:0, v2:0}]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} updatedAt={timestamps.leads} />
-       </div>
-       <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
-          <div className="flex items-center gap-1.5 mb-1 border-b border-slate-50 pb-0.5"><FileSpreadsheet className="w-3 h-3 text-purple-600" /><h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Finance & Insurance</h3></div>
-          <ComparisonTable rows={financeEfficiencyStats.finance} headers={[timeLabels.prevLabel, timeLabels.currLabel]} updatedAt={timestamps.bookings} />
-       </div>
-       <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
-          <div className="flex items-center gap-1.5 mb-1 border-b border-slate-50 pb-0.5"><Users className="w-3 h-3 text-orange-600" /><h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Sales Activity</h3></div>
-          <ComparisonTable rows={[
-               {label: 'Monthly Bookings', v1: funnelStats[3]?.v1 || 0, v2: funnelStats[3]?.v2 || 0},
-               {label: 'Monthly Retails', v1: funnelStats[4]?.v1 || 0, v2: funnelStats[4]?.v2 || 0},
-               {label: 'Wholesale MTD', v1: 0, v2: 0},
-               {label: 'Exchange In', v1: 0, v2: 0}
-           ]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} updatedAt={timestamps.opportunities} />
-       </div>
-       <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
-          <div className="flex items-center gap-1.5 mb-1 border-b border-slate-50 pb-0.5"><DollarSign className="w-3 h-3 text-rose-600" /><h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Efficiency Metrics</h3></div>
-          <ComparisonTable rows={financeEfficiencyStats.efficiency} headers={[timeLabels.prevLabel, timeLabels.currLabel]} updatedAt={timestamps.bookings} />
-       </div>
-    </div>
-  );
 
   const DetailedView = () => {
     const consultantMix = useMemo(() => {
@@ -539,17 +519,17 @@ export default function App() {
     }, [filteredOppData]);
     return (
       <div className="space-y-2 animate-fade-in">
-        <div className="bg-white p-2 rounded-lg shadow-sm border border-slate-200 flex items-center gap-2">
+        <div className="bg-white p-1.5 rounded-lg shadow-sm border border-slate-200 flex items-center gap-2">
           <button onClick={() => setViewMode('dashboard')} className="p-1 hover:bg-slate-100 rounded transition-colors"><ArrowDownRight className="w-4 h-4 text-slate-500 rotate-135" /></button>
-          <h2 className="text-xs font-black text-slate-900 uppercase tracking-widest">{detailedMetric} Graphics Analysis</h2>
+          <h2 className="text-xs font-black text-slate-900 uppercase tracking-widest">{detailedMetric} Analytics</h2>
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
           <div className="bg-white p-3 rounded-lg shadow-sm border border-slate-200 h-60">
-             <h3 className="font-bold text-slate-800 mb-2 text-[8px] uppercase tracking-widest">SC Volume (Top 10)</h3>
+             <h3 className="font-bold text-slate-800 mb-2 text-[8px] uppercase tracking-widest text-center">SC Volume (Top 10)</h3>
              <ResponsiveContainer width="100%" height="90%"><BarChart data={consultantMix} layout="vertical"><CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} /><XAxis type="number" hide /><YAxis dataKey="name" type="category" width={80} tick={{fontSize: 7, fontWeight: 700}} axisLine={false} tickLine={false} /><RechartsTooltip cursor={{fill: '#f8fafc'}} /><Bar dataKey="value" fill="#2563eb" radius={[0, 4, 4, 0]} barSize={10} /></BarChart></ResponsiveContainer>
           </div>
           <div className="bg-white p-3 rounded-lg shadow-sm border border-slate-200 h-60">
-             <h3 className="font-bold text-slate-800 mb-2 text-[8px] uppercase tracking-widest">Pipeline Trend</h3>
+             <h3 className="font-bold text-slate-800 mb-2 text-[8px] uppercase tracking-widest text-center">Inquiry Trend</h3>
              <ResponsiveContainer width="100%" height="90%"><LineChart data={trendData}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" tick={{fontSize: 7}} /><YAxis tick={{fontSize: 7}} /><RechartsTooltip /><Line type="monotone" dataKey="value" stroke="#2563eb" strokeWidth={2} dot={{ r: 3 }} /></LineChart></ResponsiveContainer>
           </div>
           <div className="bg-white p-3 rounded-lg shadow-sm border border-slate-200 h-60 lg:col-span-2 text-center">
@@ -567,31 +547,31 @@ export default function App() {
        <ImportWizard isOpen={showImport} onClose={() => setShowImport(false)} onDataImported={handleDataImport} isUploading={isUploading} mode={storageMode} />
 
        <header className="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-sm overflow-hidden">
-         <div className="max-w-[1400px] mx-auto px-3 h-10 flex items-center justify-between gap-2 no-scrollbar">
+         <div className="max-w-[1400px] mx-auto px-3 h-10 flex items-center justify-between gap-1 no-scrollbar">
            
            <div className="flex items-center gap-1.5 shrink-0">
              <div className="w-6 h-6 bg-blue-600 rounded flex items-center justify-center text-white"><Car className="w-3.5 h-3.5" /></div>
              <h1 className="text-[10px] font-black text-slate-900 leading-none uppercase tracking-tighter italic mr-1">Sales IQ</h1>
              
-             <div className="flex bg-slate-100 p-0.5 rounded border border-slate-200 ml-1 shrink-0">
+             <div className="flex bg-slate-100 p-0.5 rounded border border-slate-200 shrink-0">
                 <button onClick={() => setViewMode('dashboard')} className={`px-2 py-0.5 rounded text-[8px] font-extrabold ${viewMode === 'dashboard' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>DASHBOARD</button>
                 <button onClick={() => setViewMode('detailed')} className={`px-2 py-0.5 rounded text-[8px] font-extrabold ${viewMode === 'detailed' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>ANALYTICS</button>
              </div>
            </div>
 
            <div className="flex items-center gap-1.5 shrink-0 px-1 border-l border-slate-100">
-              <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 h-6">
+              <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded px-1 py-0.5 h-6">
                 <UserCheck className="w-2.5 h-2.5 text-slate-400" />
                 <select className="bg-transparent text-[8px] font-bold text-slate-700 outline-none min-w-[70px]" value={filters.consultant} onChange={e => setFilters({...filters, consultant: e.target.value})}>
                    <option value="All">All SCs</option>
                    {consultantOptions.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
-              <select className="bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 text-[8px] font-bold text-slate-700 h-6" value={filters.model} onChange={e => setFilters({...filters, model: e.target.value})}>
+              <select className="bg-slate-50 border border-slate-200 rounded px-1 py-0.5 text-[8px] font-bold text-slate-700 h-6" value={filters.model} onChange={e => setFilters({...filters, model: e.target.value})}>
                  <option value="All">All Models</option>
                  {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
-              <select className="bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 text-[8px] font-bold text-slate-700 h-6" value={filters.location} onChange={e => setFilters({...filters, location: e.target.value})}>
+              <select className="bg-slate-50 border border-slate-200 rounded px-1 py-0.5 text-[8px] font-bold text-slate-700 h-6" value={filters.location} onChange={e => setFilters({...filters, location: e.target.value})}>
                  <option value="All">All Branches</option>
                  {locationOptions.map(l => <option key={l} value={l}>{l}</option>)}
               </select>
@@ -610,7 +590,39 @@ export default function App() {
 
        <main className="max-w-[1400px] mx-auto px-3 py-2">
          {successMsg && <div className="bg-emerald-600 text-white rounded shadow-sm px-3 py-1 text-[9px] font-black mb-2 animate-fade-in flex items-center gap-2 uppercase tracking-wide"><CheckCircle className="w-2.5 h-2.5" /> {successMsg}</div>}
-         {viewMode === 'dashboard' && <DashboardView />}
+         {viewMode === 'dashboard' && (
+           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5 animate-fade-in">
+              <div className="bg-white rounded-lg card-shadow p-2 flex flex-col hover:border-blue-200 border border-transparent transition-all group cursor-pointer" onClick={() => { setDetailedMetric('Inquiries'); setViewMode('detailed'); }}>
+                <div className="flex items-center gap-1.5 mb-1 border-b border-slate-50 pb-0.5"><LayoutDashboard className="w-3 h-3 text-blue-600" /><h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Sales Funnel</h3></div>
+                <ComparisonTable rows={funnelStats} headers={[timeLabels.prevLabel, timeLabels.currLabel]} updatedAt={timestamps.opportunities} />
+              </div>
+              <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
+                <div className="flex items-center gap-1.5 mb-1 border-b border-slate-50 pb-0.5"><Car className="w-3 h-3 text-indigo-600" /><h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Stock Status</h3></div>
+                <ComparisonTable rows={inventoryStats} headers={[timeLabels.prevLabel, timeLabels.currLabel]} updatedAt={timestamps.inventory} />
+              </div>
+              <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
+                <div className="flex items-center gap-1.5 mb-1 border-b border-slate-50 pb-0.5"><TrendingUp className="w-3 h-3 text-emerald-600" /><h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Top Channels</h3></div>
+                <ComparisonTable rows={sourceStats.length ? sourceStats : [{label: 'No Data', v1:0, v2:0}]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} updatedAt={timestamps.leads} />
+              </div>
+              <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
+                <div className="flex items-center gap-1.5 mb-1 border-b border-slate-50 pb-0.5"><FileSpreadsheet className="w-3 h-3 text-purple-600" /><h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Finance & Insurance</h3></div>
+                <ComparisonTable rows={financeEfficiencyStats.finance} headers={[timeLabels.prevLabel, timeLabels.currLabel]} updatedAt={timestamps.bookings} />
+              </div>
+              <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
+                <div className="flex items-center gap-1.5 mb-1 border-b border-slate-50 pb-0.5"><Users className="w-3 h-3 text-orange-600" /><h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Sales Activity</h3></div>
+                <ComparisonTable rows={[
+                     {label: 'Monthly Bookings', v1: funnelStats[3]?.v1 || 0, v2: funnelStats[3]?.v2 || 0},
+                     {label: 'Monthly Retails', v1: funnelStats[4]?.v1 || 0, v2: funnelStats[4]?.v2 || 0},
+                     {label: 'Wholesale MTD', v1: 0, v2: 0},
+                     {label: 'Exchange In', v1: 0, v2: 0}
+                 ]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} updatedAt={timestamps.opportunities} />
+              </div>
+              <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
+                <div className="flex items-center gap-1.5 mb-1 border-b border-slate-50 pb-0.5"><DollarSign className="w-3 h-3 text-rose-600" /><h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Efficiency Metrics</h3></div>
+                <ComparisonTable rows={financeEfficiencyStats.efficiency} headers={[timeLabels.prevLabel, timeLabels.currLabel]} updatedAt={timestamps.bookings} />
+              </div>
+           </div>
+         )}
          {viewMode === 'detailed' && <DetailedView />}
          {viewMode === 'table' && (
             <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
