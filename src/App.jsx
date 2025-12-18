@@ -198,7 +198,7 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) =>
     <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center backdrop-blur-sm px-4">
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-fade-in border border-slate-200">
         <div className="bg-slate-900 px-5 py-3 flex justify-between items-center">
-          <h2 className="text-white font-bold text-sm flex items-center gap-2"><Upload className="w-4 h-4 text-blue-400" /> Import Data</h2>
+          <h2 className="text-white font-bold text-sm flex items-center gap-2"><Upload className="w-4 h-4 text-blue-400" /> Import Master Data</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
         </div>
         <div className="p-5 space-y-4">
@@ -240,7 +240,7 @@ const ComparisonTable = ({ rows, headers, updatedAt }) => (
           const v1 = row.v1 || 0; const v2 = row.v2 || 0; const isUp = v2 >= v1;
           const format = (val, type) => { if (type === 'currency') return `₹${(val/100000).toFixed(1)}L`; return val.toLocaleString(); };
           return (
-            <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
+            <tr key={idx} className="hover:bg-slate-50/80 transition-colors group">
               <td className="py-1 pl-2 font-medium text-slate-600 flex items-center gap-1 truncate border-r border-slate-50/30">
                  {isUp ? <ArrowUpRight className="w-2.5 h-2.5 text-emerald-500 shrink-0" /> : <ArrowDownRight className="w-2.5 h-2.5 text-rose-500 shrink-0" />}
                  <span className="truncate text-[11px] leading-tight" title={row.label}>{row.label}</span>
@@ -268,7 +268,9 @@ export default function App() {
   const [invData, setInvData] = useState([]);
   const [bookingData, setBookingData] = useState([]);
   
+  // Separation of timestamps state
   const [timestamps, setTimestamps] = useState({ opportunities: null, leads: null, inventory: null, bookings: null });
+  
   const [showImport, setShowImport] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [viewMode, setViewMode] = useState('dashboard'); 
@@ -354,6 +356,23 @@ export default function App() {
     } catch (e) { alert("Error: " + e.message); } finally { setIsUploading(false); }
   };
 
+  const clearData = async () => {
+    if(window.confirm("System Reset?")) {
+       if (storageMode === 'cloud' && user) {
+          await supabase.from('opportunities').delete().eq('user_id', user.id);
+          await supabase.from('leads').delete().eq('user_id', user.id);
+          await supabase.from('inventory').delete().eq('user_id', user.id);
+          await supabase.from('bookings').delete().eq('user_id', user.id);
+       } else {
+          localStorage.clear();
+       }
+       setOppData([]); setLeadData([]); setInvData([]); setBookingData([]);
+       setTimestamps({opportunities: null, leads: null, inventory: null, bookings: null});
+       setSuccessMsg("Cleared.");
+       setTimeout(() => setSuccessMsg(''), 3000);
+    }
+  };
+
   const getFilteredData = (data, dataType) => {
     return data.filter(item => {
       const itemModel = getVal(item, ['modellinefe', 'Model Line', 'Model']).trim();
@@ -377,7 +396,7 @@ export default function App() {
   const consultantOptions = useMemo(() => [...new Set(oppData.map(d => getVal(d, ['Assigned To'])))].filter(Boolean).sort(), [oppData]);
   const modelOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['modellinefe', 'Model Line'])))].filter(Boolean).sort(), [allDataForFilters]);
 
-  // --- BUSINESS METRICS ---
+  // --- BUSINESS LOGIC ---
   const funnelStats = useMemo(() => {
     if (!timeLabels.currLabel) return [];
     const getMonthData = (label) => filteredOppData.filter(d => getMonthStr(getVal(d, ['createdon', 'createddate'])) === label);
@@ -403,23 +422,26 @@ export default function App() {
 
   const inventoryStats = useMemo(() => {
     const total = filteredInvData.length;
-    const bookedVinSet = new Set(bookingData.map(b => getVal(b, ['Vehicle ID No.', 'VIN']).trim()).filter(Boolean));
     const bookingModelTexts = bookingData.map(b => getVal(b, ['Model Text 1']).toLowerCase());
+    
     const checkIsBooked = (d) => {
-      const vin = getVal(d, ['Vehicle Identification Number', 'vin']).trim();
       const salesOrder = getVal(d, ['Sales Order Number']).trim();
       const modelCode = getVal(d, ['Model Sales Code']).toLowerCase().trim();
-      if (salesOrder) return true; if (vin && bookedVinSet.has(vin)) return true;
+      // 1. If has explicit order number
+      if (salesOrder) return true;
+      // 2. If model code exists in any booking text (User Logic)
       if (modelCode && bookingModelTexts.some(txt => txt.includes(modelCode))) return true;
       return false;
     };
+
     const bookedCount = filteredInvData.filter(checkIsBooked).length;
     const openCount = total - bookedCount;
     const currentMonthLabel = timeLabels.currLabel;
     const openingStock = filteredInvData.filter(d => { const m = getMonthStr(getVal(d, ['GRN Date'])); return m !== currentMonthLabel && !checkIsBooked(d); }).length;
     const ageing90 = filteredInvData.filter(d => parseInt(getVal(d, ['Ageing Days']) || '0') > 90).length;
+
     return [
-      { label: 'Total Stock', v1: 0, v2: total },
+      { label: 'Total Inventory', v1: 0, v2: total },
       { label: 'Opening Stock', v1: 0, v2: openingStock, sub2: total ? Math.round((openingStock/total)*100)+'%' : '-' },
       { label: 'Available (Open)', v1: 0, v2: openCount, sub2: total ? Math.round((openCount/total)*100)+'%' : '-' },
       { label: 'Customer Booked', v1: 0, v2: bookedCount, sub2: total ? Math.round((bookedCount/total)*100)+'%' : '-' },
@@ -437,12 +459,12 @@ export default function App() {
         { label: 'Finance Pen.', v1: 0, v2: financed, sub2: retails ? Math.round((financed/retails)*100)+'%' : '0%' },
         { label: 'Insurance Pen.', v1: 0, v2: insured, sub2: retails ? Math.round((insured/retails)*100)+'%' : '0%' },
         { label: 'Exchange Pen.', v1: 0, v2: 0 },
-        { label: 'VAS / Accessories', v1: 0, v2: 0, type: 'currency' }
+        { label: 'Accessories', v1: 0, v2: 0, type: 'currency' }
       ],
       efficiency: [
         { label: 'Avg. Retail/SC', v1: 0, v2: (retails / scCount).toFixed(1) },
         { label: 'Total Retails', v1: 0, v2: retails },
-        { label: 'Revenue MTD', v1: 0, v2: 0, type: 'currency' },
+        { label: 'Revenue Pool', v1: 0, v2: 0, type: 'currency' },
         { label: 'Margin Pool', v1: 0, v2: 0, type: 'currency' }
       ]
     };
@@ -507,7 +529,7 @@ export default function App() {
       <div className="space-y-2 animate-fade-in">
         <div className="bg-white p-2 rounded-lg shadow-sm border border-slate-200 flex items-center gap-2">
           <button onClick={() => setViewMode('dashboard')} className="p-1 hover:bg-slate-100 rounded transition-colors"><ArrowDownRight className="w-4 h-4 text-slate-500 rotate-135" /></button>
-          <h2 className="text-xs font-black text-slate-900 uppercase tracking-widest">{detailedMetric} Analytics</h2>
+          <h2 className="text-xs font-black text-slate-900 uppercase tracking-widest">{detailedMetric} Graphics Analysis</h2>
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
           <div className="bg-white p-3 rounded-lg shadow-sm border border-slate-200 h-60">
@@ -515,11 +537,11 @@ export default function App() {
              <ResponsiveContainer width="100%" height="90%"><BarChart data={consultantMix} layout="vertical"><CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} /><XAxis type="number" hide /><YAxis dataKey="name" type="category" width={80} tick={{fontSize: 7, fontWeight: 700}} axisLine={false} tickLine={false} /><RechartsTooltip cursor={{fill: '#f8fafc'}} /><Bar dataKey="value" fill="#2563eb" radius={[0, 4, 4, 0]} barSize={10} /></BarChart></ResponsiveContainer>
           </div>
           <div className="bg-white p-3 rounded-lg shadow-sm border border-slate-200 h-60">
-             <h3 className="font-bold text-slate-800 mb-2 text-[8px] uppercase tracking-widest">Inquiry Trend</h3>
+             <h3 className="font-bold text-slate-800 mb-2 text-[8px] uppercase tracking-widest">Pipeline Trend</h3>
              <ResponsiveContainer width="100%" height="90%"><LineChart data={trendData}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" tick={{fontSize: 7}} /><YAxis tick={{fontSize: 7}} /><RechartsTooltip /><Line type="monotone" dataKey="value" stroke="#2563eb" strokeWidth={2} dot={{ r: 3 }} /></LineChart></ResponsiveContainer>
           </div>
-          <div className="bg-white p-3 rounded-lg shadow-sm border border-slate-200 h-60 lg:col-span-2">
-             <h3 className="font-bold text-slate-800 mb-2 text-[8px] uppercase tracking-widest text-center">Model Mix</h3>
+          <div className="bg-white p-3 rounded-lg shadow-sm border border-slate-200 h-60 lg:col-span-2 text-center">
+             <h3 className="font-bold text-slate-800 mb-2 text-[8px] uppercase tracking-widest">Model Distribution</h3>
              <ResponsiveContainer width="100%" height="90%"><PieChart><Pie data={modelMix} innerRadius={40} outerRadius={60} paddingAngle={4} dataKey="value" nameKey="name">{modelMix.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}</Pie><RechartsTooltip /><Legend iconSize={7} wrapperStyle={{fontSize: '8px', fontWeight: 700}} /></PieChart></ResponsiveContainer>
           </div>
         </div>
@@ -533,47 +555,43 @@ export default function App() {
        <ImportWizard isOpen={showImport} onClose={() => setShowImport(false)} onDataImported={handleDataImport} isUploading={isUploading} mode={storageMode} />
 
        <header className="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-sm">
-         <div className="max-w-[1400px] mx-auto px-3 h-10 flex items-center justify-between gap-4">
-           {/* Row 1: Title & Nav & Filters all in one compact row */}
-           <div className="flex items-center gap-2 shrink-0">
+         <div className="max-w-[1400px] mx-auto px-3 h-10 flex items-center justify-between gap-3 overflow-x-auto no-scrollbar">
+           
+           <div className="flex items-center gap-1.5 shrink-0">
              <div className="w-6 h-6 bg-blue-600 rounded flex items-center justify-center text-white"><Car className="w-3.5 h-3.5" /></div>
-             <h1 className="text-[10px] font-black text-slate-900 leading-none uppercase tracking-tighter italic mr-2">Sales IQ</h1>
-           </div>
-
-           <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-1">
-              <div className="flex bg-slate-100 p-0.5 rounded border border-slate-200 shrink-0">
+             <h1 className="text-[10px] font-black text-slate-900 leading-none uppercase tracking-tighter italic mr-1">Sales IQ</h1>
+             
+             <div className="flex bg-slate-100 p-0.5 rounded border border-slate-200 ml-1 shrink-0">
                 <button onClick={() => setViewMode('dashboard')} className={`px-2 py-0.5 rounded text-[8px] font-extrabold ${viewMode === 'dashboard' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>DASHBOARD</button>
                 <button onClick={() => setViewMode('detailed')} className={`px-2 py-0.5 rounded text-[8px] font-extrabold ${viewMode === 'detailed' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>ANALYTICS</button>
-              </div>
-              
-              <div className="h-4 w-px bg-slate-200 shrink-0 mx-1"></div>
+             </div>
+           </div>
 
-              <div className="flex items-center gap-1.5 shrink-0">
-                <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 h-6">
-                  <UserCheck className="w-2.5 h-2.5 text-slate-400" />
-                  <select className="bg-transparent text-[8px] font-bold text-slate-700 outline-none min-w-[70px]" value={filters.consultant} onChange={e => setFilters({...filters, consultant: e.target.value})}>
-                     <option value="All">All SCs</option>
-                     {consultantOptions.map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </div>
-                <select className="bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 text-[8px] font-bold text-slate-700 h-6" value={filters.model} onChange={e => setFilters({...filters, model: e.target.value})}>
-                   <option value="All">All Models</option>
-                   {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
-                <select className="bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 text-[8px] font-bold text-slate-700 h-6" value={filters.location} onChange={e => setFilters({...filters, location: e.target.value})}>
-                   <option value="All">All Branches</option>
-                   {locationOptions.map(l => <option key={l} value={l}>{l}</option>)}
+           <div className="flex items-center gap-1.5 shrink-0 px-2 border-l border-slate-200">
+              <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded px-1 py-0.5 h-6">
+                <UserCheck className="w-2.5 h-2.5 text-slate-400" />
+                <select className="bg-transparent text-[8px] font-bold text-slate-700 outline-none min-w-[70px]" value={filters.consultant} onChange={e => setFilters({...filters, consultant: e.target.value})}>
+                   <option value="All">All SCs</option>
+                   {consultantOptions.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
+              <select className="bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 text-[8px] font-bold text-slate-700 h-6" value={filters.model} onChange={e => setFilters({...filters, model: e.target.value})}>
+                 <option value="All">All Models</option>
+                 {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+              <select className="bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 text-[8px] font-bold text-slate-700 h-6" value={filters.location} onChange={e => setFilters({...filters, location: e.target.value})}>
+                 <option value="All">All Branches</option>
+                 {locationOptions.map(l => <option key={l} value={l}>{l}</option>)}
+              </select>
            </div>
 
            <div className="flex items-center gap-2 shrink-0 ml-auto">
-              <div className="comparison-toggle shrink-0" onClick={() => setTimeView(timeView === 'CY' ? 'LY' : 'CY')}>
+              <div className="comparison-toggle" onClick={() => setTimeView(timeView === 'CY' ? 'LY' : 'CY')}>
                   <div className={`comparison-toggle-item ${timeView === 'CY' ? 'comparison-toggle-active' : 'text-slate-500'}`}>CY</div>
                   <div className={`comparison-toggle-item ${timeView === 'LY' ? 'comparison-toggle-active' : 'text-slate-500'}`}>LY</div>
               </div>
-              <button onClick={() => setShowImport(true)} className="bg-slate-900 text-white px-2.5 py-1 rounded text-[8px] font-black hover:bg-slate-800 flex items-center gap-1 shrink-0">IMPORT</button>
-              <button onClick={clearData} className="p-1 text-rose-400 hover:bg-rose-50 rounded transition-colors"><Trash2 className="w-3 h-3" /></button>
+              <button onClick={() => setShowImport(true)} className="bg-slate-900 text-white px-2 py-0.5 rounded text-[8px] font-black hover:bg-slate-800 flex items-center gap-1 shrink-0 h-6">IMPORT</button>
+              <button onClick={clearData} className="p-1 text-rose-400 hover:bg-rose-50 rounded transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
            </div>
          </div>
        </header>
@@ -582,7 +600,28 @@ export default function App() {
          {successMsg && <div className="bg-emerald-600 text-white rounded shadow-sm px-3 py-1 text-[9px] font-black mb-2 animate-fade-in flex items-center gap-2 uppercase tracking-wide"><CheckCircle className="w-2.5 h-2.5" /> {successMsg}</div>}
          {viewMode === 'dashboard' && <DashboardView />}
          {viewMode === 'detailed' && <DetailedView />}
-         {viewMode === 'table' && <TableView />}
+         {viewMode === 'table' && (
+            <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-[10px] text-slate-600">
+                  <thead className="bg-slate-50 text-slate-400 font-bold border-b border-slate-200 uppercase tracking-tighter">
+                    <tr><th className="p-2">ID</th><th className="p-2">Customer</th><th className="p-2">Model</th><th className="p-2">Date</th><th className="p-2">Status</th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {(filteredOppData.length > 0 ? filteredOppData : filteredLeadData).slice(0, 50).map((row, idx) => (
+                      <tr key={idx} className="hover:bg-slate-50 transition-colors">
+                        <td className="p-2 font-mono text-slate-400 text-[8px]">{getVal(row, ['id', 'leadid', 'vin'])}</td>
+                        <td className="p-2 font-semibold text-slate-800">{getVal(row, ['customer', 'name']) || 'Anonymous'}</td>
+                        <td className="p-2">{getVal(row, ['modelline', 'Model Line'])}</td>
+                        <td className="p-2">{getVal(row, ['createdon', 'createddate'])}</td>
+                        <td className="p-2"><span className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-100 text-[8px] font-bold">{getVal(row, ['status', 'qualificationlevel']) || 'Active'}</span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+         )}
        </main>
     </div>
   );
