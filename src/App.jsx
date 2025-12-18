@@ -18,26 +18,18 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
 // --- CONFIGURATION & SETUP ---
 let supabase = null;
 
-/**
- * Accessing environment variables safely. 
- * In this environment, we fallback to empty strings or window globals if import.meta is unavailable.
- */
 const getEnv = (key) => {
   try {
-    // Attempt Vite style first
     if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[key]) {
       return import.meta.env[key];
     }
   } catch (e) {}
-  
-  // Fallback to window or empty
   return (typeof window !== 'undefined' ? window[key] : '') || '';
 };
 
 const supabaseUrl = getEnv('VITE_SUPABASE_URL');
 const supabaseAnonKey = getEnv('VITE_SUPABASE_ANON_KEY');
 
-// 1. INITIALIZE SUPABASE CLIENT
 try {
   if (supabaseUrl && supabaseAnonKey) {
     supabase = createClient(supabaseUrl, supabaseAnonKey);
@@ -63,7 +55,6 @@ const GlobalStyles = () => (
   `}</style>
 );
 
-// --- CONSTANTS ---
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658', '#8dd1e1'];
 
 // --- HELPERS ---
@@ -109,16 +100,12 @@ const parseCSV = (text) => {
   return { rows, rawHeaders }; 
 };
 
-// --- DATA HANDLERS (SUPABASE) ---
-
 const uploadToSupabase = async (userId, tableName, data) => {
-  if (!supabase) throw new Error("Supabase client not initialized. Check your VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.");
+  if (!supabase) throw new Error("Supabase client not initialized.");
   
-  // Prepare records for Upsert
   const records = data.map(item => ({
     ...item,
     user_id: userId,
-    // Maintain key naming for conflict resolution
     id: tableName === 'opportunities' ? (item['id'] || item['opportunityid']) : undefined,
     leadid: tableName === 'leads' ? (item['leadid'] || item['lead id']) : undefined,
     vin: tableName === 'inventory' ? (item['vehicleidentificationnumber'] || item['vin']) : undefined
@@ -187,20 +174,17 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) =>
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-xl overflow-hidden animate-fade-in-up">
         <div className="bg-slate-800 px-6 py-4 flex justify-between items-center">
           <h2 className="text-white font-bold text-lg flex items-center gap-2">
-            <Upload className="w-5 h-5" /> Import Data ({mode === 'cloud' ? 'Supabase Cloud' : 'Local Storage'})
+            <Upload className="w-5 h-5" /> Import Data ({mode === 'cloud' ? 'Supabase' : 'Local'})
           </h2>
           <button onClick={onClose} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
         </div>
         
         <div className="p-6 space-y-6">
-          <div className={`p-4 rounded-lg text-sm ${mode === 'cloud' ? 'bg-blue-50 text-blue-800 border-blue-100' : 'bg-orange-50 text-orange-800 border-orange-100'}`}>
+          <div className="p-4 rounded-lg text-sm bg-blue-50 text-blue-800 border-blue-100">
              {mode === 'cloud' ? (
-                <>Upload <strong>Sales Data</strong> to your Supabase Postgres database.</>
+                <>Upload <strong>CSV Data</strong> to your Supabase Postgres database.</>
              ) : (
-                <>
-                  <strong>Local Mode Active:</strong> Supabase credentials not detected.<br/>
-                  Data will be stored in your browser's LocalStorage (~5MB limit).
-                </>
+                <><strong>Local Mode:</strong> Data is saved in your browser storage.</>
              )}
           </div>
 
@@ -283,7 +267,7 @@ export default function App() {
   const [filters, setFilters] = useState({ model: 'All', location: 'All', consultant: 'All' });
   const [storageMode, setStorageMode] = useState(supabase ? 'cloud' : 'local');
 
-  // --- 1. INITIALIZATION & AUTH ---
+  // --- INITIALIZATION & AUTH ---
   useEffect(() => {
     if (supabase) {
       const initAuth = async () => {
@@ -291,7 +275,6 @@ export default function App() {
         setUser(session?.user || null);
       };
       initAuth();
-
       const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
         setUser(session?.user || null);
       });
@@ -301,7 +284,7 @@ export default function App() {
     }
   }, []);
 
-  // --- 2. DATA FETCHING ---
+  // --- DATA FETCHING ---
   useEffect(() => {
     const loadData = async () => {
       if (storageMode === 'cloud' && user) {
@@ -327,7 +310,7 @@ export default function App() {
     loadData();
   }, [user, storageMode]);
 
-  // --- 3. DATE HELPERS ---
+  // --- DATE HELPERS ---
   const getDateObj = (dateStr) => {
       if (!dateStr) return new Date(0);
       let d = new Date(dateStr);
@@ -356,26 +339,26 @@ export default function App() {
     if (maxDate.getTime() === 0) return { prevLabel: 'Prev', currLabel: 'Curr' };
     const currMonth = maxDate; 
     let prevMonth = new Date(currMonth);
-    if (timeView === 'CY') prevMonth.setMonth(currMonth.getMonth() - 1);
-    else prevMonth.setFullYear(currMonth.getFullYear() - 1);
+    
+    // Switch comparison period based on timeView (CY vs LY)
+    if (timeView === 'CY') {
+      prevMonth.setMonth(currMonth.getMonth() - 1);
+    } else {
+      prevMonth.setFullYear(currMonth.getFullYear() - 1);
+    }
+
     const currLabel = currMonth.toLocaleString('default', { month: 'short', year: '2-digit' });
     const prevLabel = prevMonth.toLocaleString('default', { month: 'short', year: '2-digit' });
     return { prevLabel, currLabel };
   }, [oppData, timeView]);
 
-  // --- 4. UPLOAD HANDLER ---
+  // --- UPLOAD HANDLER ---
   const handleDataImport = async (newData, type) => {
     setIsUploading(true);
     try {
-      if (storageMode === 'cloud') {
-         if (!user) {
-           alert("You must be logged into Supabase to sync data to the cloud.");
-           return;
-         }
+      if (storageMode === 'cloud' && user) {
          const count = await uploadToSupabase(user.id, type, newData);
          setSuccessMsg(`Synced ${count} records to Supabase`);
-         
-         // Trigger refresh
          const { data } = await supabase.from(type).select('*').eq('user_id', user.id);
          if (type === 'opportunities') setOppData(data);
          else if (type === 'leads') setLeadData(data);
@@ -391,7 +374,6 @@ export default function App() {
       }
       setTimeout(() => setSuccessMsg(''), 5000);
     } catch (e) {
-      console.error("Upload failed", e);
       alert("Upload failed: " + e.message);
     } finally {
       setIsUploading(false);
@@ -437,7 +419,7 @@ export default function App() {
   const consultantOptions = useMemo(() => [...new Set(allDataForFilters.map(d => d['Assigned To'] || d['assignedto']).filter(Boolean))].sort(), [allDataForFilters]);
   const modelOptions = useMemo(() => [...new Set(allDataForFilters.map(d => d['modellinefe'] || d['Model Line']).filter(Boolean))].sort(), [allDataForFilters]);
 
-  // --- STATS CALCULATION ---
+  // --- CALCULATION LOGIC ---
   const funnelStats = useMemo(() => {
     if (!timeLabels.currLabel) return [];
     const getMonthData = (label) => filteredOppData.filter(d => getMonthStr(d['createdon'] || d['createddate']) === label);
@@ -458,8 +440,8 @@ export default function App() {
       { label: 'Inquiries', v1: p.inquiries, sub1: '100%', v2: c.inquiries, sub2: '100%' },
       { label: 'Test-drives', v1: p.testDrives, sub1: calcPct(p.testDrives, p.inquiries), v2: c.testDrives, sub2: calcPct(c.testDrives, c.inquiries) },
       { label: 'Hot Leads', v1: p.hotLeads, sub1: calcPct(p.hotLeads, p.inquiries), v2: c.hotLeads, sub2: calcPct(c.hotLeads, c.inquiries) },
-      { label: 'Booking Conversion', v1: p.bookings, sub1: calcPct(p.bookings, p.inquiries), v2: c.bookings, sub2: calcPct(c.bookings, c.inquiries) },
-      { label: 'Retail Conversion', v1: p.retails, sub1: calcPct(p.retails, p.inquiries), v2: c.retails, sub2: calcPct(c.retails, c.inquiries) },
+      { label: 'Booking Conv.', v1: p.bookings, sub1: calcPct(p.bookings, p.inquiries), v2: c.bookings, sub2: calcPct(c.bookings, c.inquiries) },
+      { label: 'Retail Conv.', v1: p.retails, sub1: calcPct(p.retails, p.inquiries), v2: c.retails, sub2: calcPct(c.retails, c.inquiries) },
     ];
   }, [filteredOppData, timeLabels]);
 
@@ -472,13 +454,24 @@ export default function App() {
       { label: 'Total Inventory', v1: 0, v2: total },
       { label: 'Open Inventory', v1: 0, v2: open, sub2: total ? Math.round((open/total)*100)+'%' : '-' },
       { label: 'Booked Inventory', v1: 0, v2: booked, sub2: total ? Math.round((booked/total)*100)+'%' : '-' },
+      { label: 'Wholesale (MTD)', v1: 0, v2: 0 },
       { label: 'Ageing (>90D)', v1: 0, v2: ageing },
     ];
   }, [filteredInvData]);
 
+  const sourceStats = useMemo(() => {
+    const sourceDataset = filteredLeadData.length > 0 ? filteredLeadData : filteredOppData;
+    const currData = sourceDataset.filter(d => getMonthStr(d['createdon'] || d['createddate']) === timeLabels.currLabel);
+    const counts = {};
+    currData.forEach(d => { const s = d['source'] || 'Other'; counts[s] = (counts[s] || 0) + 1; });
+    return Object.entries(counts).sort(([,a], [,b]) => b - a).slice(0, 5)
+      .map(([label, val]) => ({ label, v1: 0, v2: val, sub2: currData.length ? Math.round((val/currData.length)*100)+'%' : '0%' }));
+  }, [filteredLeadData, filteredOppData, timeLabels]);
+
   // --- VIEWS ---
   const DashboardView = () => (
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 animate-fade-in">
+       {/* 1. Sales Funnel */}
        <div className="rounded-lg shadow-sm border p-4 flex flex-col h-full hover:shadow-md transition-shadow cursor-pointer bg-white border-slate-200" onClick={() => { setDetailedMetric('Inquiries'); setViewMode('detailed'); }}>
           <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-2">
             <div className="bg-blue-50 p-1.5 rounded text-blue-600"><LayoutDashboard className="w-4 h-4" /></div>
@@ -486,6 +479,8 @@ export default function App() {
           </div>
           <ComparisonTable rows={funnelStats} headers={[timeLabels.prevLabel, timeLabels.currLabel]} timestamp={true} />
        </div>
+
+       {/* 2. Inventory */}
        <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-4 flex flex-col h-full hover:shadow-md transition-shadow">
           <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-2">
             <div className="bg-indigo-50 p-1.5 rounded text-indigo-600"><Car className="w-4 h-4" /></div>
@@ -493,15 +488,55 @@ export default function App() {
           </div>
           <ComparisonTable rows={inventoryStats} headers={['', 'Total']} timestamp={true} />
        </div>
+
+       {/* 3. Lead Source */}
+       <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-4 flex flex-col h-full hover:shadow-md transition-shadow">
+          <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-2">
+            <div className="bg-emerald-50 p-1.5 rounded text-emerald-600"><TrendingUp className="w-4 h-4" /></div>
+            <h3 className="font-bold text-slate-700">Lead Source</h3>
+          </div>
+          <ComparisonTable rows={sourceStats.length ? sourceStats : [{label: 'No Data', v1:0, v2:0}]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} timestamp={true} />
+       </div>
+
+       {/* 4. Cross-Sell */}
+       <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-4 flex flex-col h-full hover:shadow-md transition-shadow">
+          <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-2">
+            <div className="bg-purple-50 p-1.5 rounded text-purple-600"><FileSpreadsheet className="w-4 h-4" /></div>
+            <h3 className="font-bold text-slate-700">Cross-Sell</h3>
+          </div>
+          <ComparisonTable rows={[
+               {label: 'Car Finance', v1: 0, v2: 0},
+               {label: 'Insurance', v1: 0, v2: 0},
+               {label: 'Exchange/Buy-in', v1: 0, v2: 0},
+               {label: 'Accessories', v1: 0, v2: 0, type: 'currency'}
+           ]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} timestamp={true} />
+       </div>
+
+       {/* 5. Sales Management */}
+       <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-4 flex flex-col h-full hover:shadow-md transition-shadow">
+          <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-2">
+            <div className="bg-orange-50 p-1.5 rounded text-orange-600"><Users className="w-4 h-4" /></div>
+            <h3 className="font-bold text-slate-700">Sales Management</h3>
+          </div>
+          <ComparisonTable rows={[
+               {label: 'Bookings', v1: funnelStats[3]?.v1 || 0, v2: funnelStats[3]?.v2 || 0},
+               {label: 'Dlr. Retail', v1: funnelStats[4]?.v1 || 0, v2: funnelStats[4]?.v2 || 0},
+               {label: 'OEM Retail', v1: 0, v2: 0},
+               {label: 'POC Sales', v1: 0, v2: 0}
+           ]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} timestamp={true} />
+       </div>
+
+       {/* 6. Profit & Productivity */}
        <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-4 flex flex-col h-full hover:shadow-md transition-shadow">
           <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-2">
             <div className="bg-rose-50 p-1.5 rounded text-rose-600"><DollarSign className="w-4 h-4" /></div>
-            <h3 className="font-bold text-slate-700">Profitability</h3>
+            <h3 className="font-bold text-slate-700">Profit & Productivity</h3>
           </div>
           <ComparisonTable rows={[
                {label: 'New car Margin', v1: 0, v2: 0, type: 'currency'},
+               {label: 'Margin per car', v1: 0, v2: 0},
                {label: 'Used cars Margin', v1: 0, v2: 0, type: 'currency'},
-               {label: 'Service Productivity', v1: 0, v2: 0},
+               {label: 'SC Productivity', v1: 0, v2: 0},
            ]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} timestamp={true} />
        </div>
     </div>
@@ -522,20 +557,18 @@ export default function App() {
           </button>
           <h2 className="text-xl font-bold text-blue-700">{detailedMetric} Analysis</h2>
         </div>
-        <div className="grid grid-cols-1 gap-6">
-           <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
-             <h3 className="font-bold text-slate-700 mb-4">Consultant Distribution</h3>
-             <div className="h-64">
-               <ResponsiveContainer width="100%" height="100%">
-                 <BarChart data={consultantMix} layout="vertical">
-                   <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
-                   <XAxis type="number" hide />
-                   <YAxis dataKey="name" type="category" width={110} tick={{fontSize: 10}} axisLine={false} tickLine={false} />
-                   <RechartsTooltip cursor={{fill: '#f8fafc'}} />
-                   <Bar dataKey="value" fill="#6366f1" radius={[0, 4, 4, 0]} barSize={18} />
-                 </BarChart>
-               </ResponsiveContainer>
-             </div>
+        <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
+           <h3 className="font-bold text-slate-700 mb-4">Consultant Performance</h3>
+           <div className="h-80">
+             <ResponsiveContainer width="100%" height="100%">
+               <BarChart data={consultantMix} layout="vertical">
+                 <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
+                 <XAxis type="number" hide />
+                 <YAxis dataKey="name" type="category" width={110} tick={{fontSize: 10}} axisLine={false} tickLine={false} />
+                 <RechartsTooltip cursor={{fill: '#f8fafc'}} />
+                 <Bar dataKey="value" fill="#6366f1" radius={[0, 4, 4, 0]} barSize={18} />
+               </BarChart>
+             </ResponsiveContainer>
            </div>
         </div>
       </div>
@@ -550,7 +583,7 @@ export default function App() {
              <tr><th className="p-3">ID</th><th className="p-3">Customer</th><th className="p-3">Model</th><th className="p-3">Date</th><th className="p-3">Status</th></tr>
            </thead>
            <tbody className="divide-y divide-slate-100">
-             {(filteredOppData.length > 0 ? filteredOppData : (filteredLeadData.length > 0 ? filteredLeadData : filteredInvData)).slice(0, 50).map((row, idx) => (
+             {(filteredOppData.length > 0 ? filteredOppData : filteredLeadData).slice(0, 50).map((row, idx) => (
                <tr key={idx} className="hover:bg-blue-50/30">
                  <td className="p-3 font-mono text-slate-500">{row['id'] || row['leadid'] || row['vin']}</td>
                  <td className="p-3">{row['customer'] || row['name'] || '-'}</td>
@@ -576,18 +609,18 @@ export default function App() {
              <div className="w-8 h-8 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-lg flex items-center justify-center text-white shadow-md"><Car className="w-5 h-5" /></div>
              <div>
                 <h1 className="text-lg font-bold text-slate-800 leading-tight">Sales Dashboard</h1>
-                <div className="text-[10px] text-slate-400">{timeLabels.currLabel} vs {timeLabels.prevLabel}</div>
+                <div className="text-[10px] text-slate-400">{timeLabels.currLabel} (Current) vs {timeLabels.prevLabel} (Prev)</div>
              </div>
            </div>
 
            <div className="flex items-center gap-4">
               <div className={`px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider border ${storageMode === 'cloud' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-orange-50 text-orange-700 border-orange-200'}`}>
-                 {storageMode === 'cloud' ? 'Supabase' : 'Local'}
+                 {storageMode === 'cloud' ? 'Supabase Cloud' : 'Local Browser'}
               </div>
               <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200">
-                <button onClick={() => setViewMode('dashboard')} className={`px-3 py-1.5 rounded-md text-xs font-bold ${viewMode === 'dashboard' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>Dashboard</button>
-                <button onClick={() => setViewMode('detailed')} className={`px-3 py-1.5 rounded-md text-xs font-bold ${viewMode === 'detailed' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>Analysis</button>
-                <button onClick={() => setViewMode('table')} className={`px-3 py-1.5 rounded-md text-xs font-bold ${viewMode === 'table' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>Data</button>
+                <button onClick={() => setViewMode('dashboard')} className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${viewMode === 'dashboard' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>Dashboard</button>
+                <button onClick={() => setViewMode('detailed')} className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${viewMode === 'detailed' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>Analysis</button>
+                <button onClick={() => setViewMode('table')} className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${viewMode === 'table' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>Data</button>
               </div>
               <button onClick={() => setShowImport(true)} className="bg-slate-800 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-slate-700">Import</button>
               <button onClick={clearData} className="bg-red-100 text-red-700 px-3 py-2 rounded-lg text-xs font-bold hover:bg-red-200" title="Clear All Data"><Trash2 className="w-3.5 h-3.5" /></button>
@@ -596,14 +629,22 @@ export default function App() {
          {successMsg && <div className="bg-emerald-50 border-b border-emerald-100 px-4 py-2 text-xs font-bold text-emerald-700 text-center animate-fade-in">{successMsg}</div>}
          
          <div className="border-t border-slate-100 bg-slate-50/50 px-4 py-2 flex items-center gap-4">
-            <span className="text-[10px] font-bold text-slate-400 uppercase">Filters:</span>
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Filters:</span>
             <select className="bg-white border border-slate-200 rounded px-2 py-1 text-xs" value={filters.model} onChange={e => setFilters({...filters, model: e.target.value})}>
                <option value="All">All Models</option>
                {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
             </select>
+            <select className="bg-white border border-slate-200 rounded px-2 py-1 text-xs" value={filters.location} onChange={e => setFilters({...filters, location: e.target.value})}>
+               <option value="All">All Locations</option>
+               {locationOptions.map(l => <option key={l} value={l}>{l}</option>)}
+            </select>
+            
             <div className="ml-auto flex items-center gap-2">
-               <button onClick={() => setTimeView('CY')} className={`px-2 py-1 text-[10px] font-bold rounded ${timeView === 'CY' ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-600'}`}>Month-on-Month</button>
-               <button onClick={() => setTimeView('LY')} className={`px-2 py-1 text-[10px] font-bold rounded ${timeView === 'LY' ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-600'}`}>Year-on-Year</button>
+               <span className="text-[10px] font-bold text-slate-400 uppercase mr-1">Compare:</span>
+               <div className="flex bg-white rounded border border-slate-200 p-0.5 shadow-sm">
+                 <button onClick={() => setTimeView('CY')} className={`px-3 py-1 text-[10px] font-bold rounded transition-colors ${timeView === 'CY' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>CY (Month-on-Month)</button>
+                 <button onClick={() => setTimeView('LY')} className={`px-3 py-1 text-[10px] font-bold rounded transition-colors ${timeView === 'LY' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>LY (Year-on-Year)</button>
+               </div>
             </div>
          </div>
        </header>
