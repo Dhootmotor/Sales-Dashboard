@@ -111,7 +111,7 @@ const parseCSV = (text) => {
   let headerIndex = 0;
   for (let i = 0; i < Math.min(lines.length, 20); i++) {
     const rawLine = lines[i].toLowerCase();
-    const keywords = ['id', 'lead id', 'order number', 'vin', 'vehicle identification number'];
+    const keywords = ['id', 'lead id', 'order number', 'vin', 'vehicle identification number', 'dealer code'];
     if (keywords.some(k => rawLine.includes(k))) {
       headerIndex = i;
       break;
@@ -132,9 +132,6 @@ const parseCSV = (text) => {
   return { rows, rawHeaders }; 
 };
 
-/**
- * Robust value extractor for CSV objects
- */
 const getVal = (d, keys) => {
   if (!d) return '';
   for(let k of keys) {
@@ -156,7 +153,7 @@ const uploadToSupabase = async (userId, tableName, data) => {
     user_id: userId,
     id: tableName === 'opportunities' ? (getVal(item, ['id', 'opportunityid'])) : undefined,
     leadid: tableName === 'leads' ? (getVal(item, ['leadid', 'lead id'])) : undefined,
-    vin: tableName === 'inventory' ? (getVal(item, ['Vehicle Identification Number', 'vehicleidentificationnumber', 'vin'])) : undefined
+    vin: tableName === 'inventory' ? (getVal(item, ['Vehicle Identification Number', 'vin'])) : undefined
   }));
 
   const conflictColumn = tableName === 'opportunities' ? 'id' : (tableName === 'leads' ? 'leadid' : 'vin');
@@ -173,7 +170,8 @@ const mergeLocalData = (currentData, newData, type) => {
   const getKey = (item) => {
     if (type === 'opportunities') return getVal(item, ['id', 'opportunityid']);
     if (type === 'leads') return getVal(item, ['leadid', 'lead id']);
-    if (type === 'inventory') return getVal(item, ['Vehicle Identification Number', 'vehicleidentificationnumber', 'vin']);
+    if (type === 'inventory') return getVal(item, ['Vehicle Identification Number', 'vin']);
+    if (type === 'bookings') return getVal(item, ['Vehicle ID No.', 'VIN']);
     return Math.random().toString();
   };
 
@@ -204,9 +202,10 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) =>
       const { rows, rawHeaders } = await readFile(file);
       const headerString = rawHeaders.join(',').toLowerCase();
       let type = 'unknown';
-      if (headerString.includes('opportunity offline score') || headerString.includes('order number')) type = 'opportunities';
+      if (headerString.includes('opportunity offline score')) type = 'opportunities';
+      else if (headerString.includes('booking to delivery') || headerString.includes('model text 1')) type = 'bookings';
       else if (headerString.includes('lead id') || headerString.includes('qualification level')) type = 'leads';
-      else if (headerString.includes('vehicle identification number') || headerString.includes('vin')) type = 'inventory'; 
+      else if (headerString.includes('vehicle identification number') || headerString.includes('grn date')) type = 'inventory'; 
 
       await onDataImported(rows, type, overwrite);
       setFile(null);
@@ -224,16 +223,12 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) =>
         <div className="bg-slate-900 px-5 py-3 flex justify-between items-center">
           <h2 className="text-white font-bold text-sm flex items-center gap-2">
             <Upload className="w-4 h-4 text-blue-400" />
-            Import CSV File
+            Import Master Data
           </h2>
           <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
         </div>
         
         <div className="p-5 space-y-4">
-          <div className="p-3 rounded-lg text-xs bg-blue-50 border border-blue-100 text-blue-700">
-             {mode === 'cloud' ? 'Syncing to Supabase SQL' : 'Saving to Local Storage'}
-          </div>
-
           <div className="border-2 border-dashed border-slate-200 rounded-xl p-8 hover:border-blue-500 transition-all bg-slate-50 relative group flex flex-col items-center justify-center text-center cursor-pointer">
                 <FileSpreadsheet className="w-8 h-8 text-blue-600 mb-2" /> 
                 <div className="text-slate-900 font-bold text-sm">{file ? file.name : "Select CSV to Upload"}</div>
@@ -244,12 +239,13 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) =>
              <input type="checkbox" id="overwrite" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500" />
              <label htmlFor="overwrite" className="text-[11px] font-bold text-slate-600 cursor-pointer">Overwrite Existing Data (Start Fresh)</label>
           </div>
+          <p className="text-[9px] text-slate-400 italic text-center">System automatically detects file type (Inventory, Booking, etc.) based on headers.</p>
         </div>
 
         <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 flex justify-end gap-2">
           <button onClick={onClose} className="px-4 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-200 rounded-lg">Cancel</button>
           <button onClick={processFiles} disabled={isUploading || !file} className={`px-5 py-1.5 text-[11px] font-bold text-white rounded-lg transition-all ${isUploading || !file ? 'bg-slate-400' : 'bg-blue-600 hover:bg-blue-700'}`}>
-            {isUploading ? 'Importing...' : 'Start Sync'}
+            {isUploading ? 'Importing...' : 'Sync System'}
           </button>
         </div>
       </div>
@@ -307,11 +303,13 @@ export default function App() {
   const [oppData, setOppData] = useState([]);
   const [leadData, setLeadData] = useState([]);
   const [invData, setInvData] = useState([]);
+  const [bookingData, setBookingData] = useState([]);
   
   const [timestamps, setTimestamps] = useState({
     opportunities: null,
     leads: null,
-    inventory: null
+    inventory: null,
+    bookings: null
   });
 
   const [showImport, setShowImport] = useState(false);
@@ -354,15 +352,20 @@ export default function App() {
           
           const { data: inventory } = await supabase.from('inventory').select('*').eq('user_id', user.id);
           if (inventory) { setInvData(inventory); setTimestamps(prev => ({...prev, inventory: now})); }
+
+          const { data: bks } = await supabase.from('bookings').select('*').eq('user_id', user.id);
+          if (bks) { setBookingData(bks); setTimestamps(prev => ({...prev, bookings: now})); }
         } catch (e) { console.error(e); }
       } else {
         try {
           const savedOpp = localStorage.getItem('dashboard_oppData');
           const savedLead = localStorage.getItem('dashboard_leadData');
           const savedInv = localStorage.getItem('dashboard_invData');
+          const savedBks = localStorage.getItem('dashboard_bookingData');
           if (savedOpp) { setOppData(JSON.parse(savedOpp)); setTimestamps(prev => ({...prev, opportunities: now})); }
           if (savedLead) { setLeadData(JSON.parse(savedLead)); setTimestamps(prev => ({...prev, leads: now})); }
           if (savedInv) { setInvData(JSON.parse(savedInv)); setTimestamps(prev => ({...prev, inventory: now})); }
+          if (savedBks) { setBookingData(JSON.parse(savedBks)); setTimestamps(prev => ({...prev, bookings: now})); }
         } catch (e) { console.error(e); }
       }
     };
@@ -412,26 +415,30 @@ export default function App() {
     const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     try {
       if (storageMode === 'cloud' && user) {
-         if (overwrite) {
-            await supabase.from(type).delete().eq('user_id', user.id);
-         }
+         if (overwrite) await supabase.from(type).delete().eq('user_id', user.id);
          const count = await uploadToSupabase(user.id, type, newData);
          setSuccessMsg(`Synced ${count} to Supabase`);
+         // Immediate refresh
          const { data } = await supabase.from(type).select('*').eq('user_id', user.id);
          if (type === 'opportunities') setOppData(data);
          else if (type === 'leads') setLeadData(data);
          else if (type === 'inventory') setInvData(data);
+         else if (type === 'bookings') setBookingData(data);
       } else {
          let current = [];
          if (!overwrite) {
-           current = type === 'opportunities' ? oppData : (type === 'leads' ? leadData : invData);
+           if (type === 'opportunities') current = oppData;
+           else if (type === 'leads') current = leadData;
+           else if (type === 'inventory') current = invData;
+           else if (type === 'bookings') current = bookingData;
          }
          const merged = mergeLocalData(current, newData, type);
          localStorage.setItem(`dashboard_${type}Data`, JSON.stringify(merged));
          if (type === 'opportunities') setOppData(merged);
          else if (type === 'leads') setLeadData(merged);
          else if (type === 'inventory') setInvData(merged);
-         setSuccessMsg(`${overwrite ? 'Overwritten' : 'Merged'} ${newData.length} records locally`);
+         else if (type === 'bookings') setBookingData(merged);
+         setSuccessMsg(`${overwrite ? 'Reset' : 'Merged'} ${newData.length} records locally`);
       }
       setTimestamps(prev => ({...prev, [type]: now}));
       setTimeout(() => setSuccessMsg(''), 5000);
@@ -443,19 +450,18 @@ export default function App() {
   };
 
   const clearData = async () => {
-    if(window.confirm("Erase all data?")) {
+    if(window.confirm("System Reset?")) {
        if (storageMode === 'cloud' && user) {
           await supabase.from('opportunities').delete().eq('user_id', user.id);
           await supabase.from('leads').delete().eq('user_id', user.id);
           await supabase.from('inventory').delete().eq('user_id', user.id);
+          await supabase.from('bookings').delete().eq('user_id', user.id);
        } else {
-          localStorage.removeItem('dashboard_oppData');
-          localStorage.removeItem('dashboard_leadData');
-          localStorage.removeItem('dashboard_invData');
+          localStorage.clear();
        }
-       setOppData([]); setLeadData([]); setInvData([]);
-       setTimestamps({opportunities: null, leads: null, inventory: null});
-       setSuccessMsg("System Reset.");
+       setOppData([]); setLeadData([]); setInvData([]); setBookingData([]);
+       setTimestamps({opportunities: null, leads: null, inventory: null, bookings: null});
+       setSuccessMsg("Cleared.");
        setTimeout(() => setSuccessMsg(''), 3000);
     }
   };
@@ -463,27 +469,19 @@ export default function App() {
   // --- FILTERING ---
   const getFilteredData = (data, dataType) => {
     return data.filter(item => {
-      // Robust Model matching
-      const itemModels = [
-        getVal(item, ['modellinefe', 'modelline', 'Model Line', 'Model'])
-      ].map(v => v.trim()).filter(Boolean);
-      const matchModel = filters.model === 'All' || itemModels.includes(filters.model);
-      
-      // IMPORTANT: Inventory records ignore Location and Consultant filters per user request
+      // INVENTORY Logic: User asked to ignore location and consultant
       if (dataType === 'inventory') {
-        return matchModel;
+        const itemModel = getVal(item, ['modellinefe', 'Model Line', 'Model']).trim();
+        return filters.model === 'All' || itemModel === filters.model;
       }
 
-      // Logic for non-inventory types
-      const itemLocs = [
-        getVal(item, ['Dealer Code']),
-        getVal(item, ['Branch Name']),
-        getVal(item, ['city']),
-        getVal(item, ['Branch'])
-      ].map(v => v.trim()).filter(Boolean);
+      const itemLocs = [getVal(item, ['Dealer Code']), getVal(item, ['Branch Name']), getVal(item, ['city'])].map(v => v.trim()).filter(Boolean);
       const matchLoc = filters.location === 'All' || itemLocs.includes(filters.location);
 
-      const itemCons = (getVal(item, ['Assigned To', 'owner']) || '').trim();
+      const itemModel = getVal(item, ['modellinefe', 'Model Line', 'Model']).trim();
+      const matchModel = filters.model === 'All' || itemModel === filters.model;
+
+      const itemCons = getVal(item, ['Assigned To', 'owner']).trim();
       const matchCons = filters.consultant === 'All' || itemCons === filters.consultant;
 
       return matchLoc && matchCons && matchModel;
@@ -492,15 +490,10 @@ export default function App() {
 
   const filteredOppData = useMemo(() => getFilteredData(oppData, 'opportunities'), [oppData, filters]);
   const filteredLeadData = useMemo(() => getFilteredData(leadData, 'leads'), [leadData, filters]);
-  
-  // Use RAW invData for calculations to avoid "0" issue from filters
-  const filteredInvData = useMemo(() => {
-    const itemModels = (item) => [getVal(item, ['modellinefe', 'modelline', 'Model Line', 'Model'])].map(v => v.trim()).filter(Boolean);
-    return invData.filter(item => filters.model === 'All' || itemModels(item).includes(filters.model));
-  }, [invData, filters.model]);
+  const filteredInvData = useMemo(() => getFilteredData(invData, 'inventory'), [invData, filters]);
   
   const allDataForFilters = useMemo(() => [...oppData, ...leadData, ...invData], [oppData, leadData, invData]);
-  const locationOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['Dealer Code', 'Branch Name', 'city'])))].filter(Boolean).sort(), [allDataForFilters]);
+  const locationOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['Dealer Code', 'city'])))].filter(Boolean).sort(), [allDataForFilters]);
   const consultantOptions = useMemo(() => [...new Set(oppData.map(d => getVal(d, ['Assigned To'])))].filter(Boolean).sort(), [oppData]);
   const modelOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['modellinefe', 'Model Line'])))].filter(Boolean).sort(), [allDataForFilters]);
 
@@ -531,30 +524,48 @@ export default function App() {
   }, [filteredOppData, timeLabels]);
 
   const inventoryStats = useMemo(() => {
-    const dataToUse = filteredInvData.length > 0 ? filteredInvData : invData;
-    const total = dataToUse.length;
+    // Inventory uses filteredInvData which only respects Model filter
+    const total = filteredInvData.length;
     
-    // Improved logic for stock status based on EXPORT Inventory file
-    // Open Stock = No Sales Order Number AND No GST Invoice
-    const open = dataToUse.filter(d => !getVal(d, ['Sales Order Number']).trim() && !getVal(d, ['GST Invoice No.']).trim()).length;
-    
-    // Customer Booked = Has Sales Order Number AND No GST Invoice
-    const booked = dataToUse.filter(d => getVal(d, ['Sales Order Number']).trim() && !getVal(d, ['GST Invoice No.']).trim()).length;
+    // Prepare Booking lookup codes
+    const bookedVinSet = new Set(bookingData.map(b => getVal(b, ['Vehicle ID No.', 'VIN']).trim()).filter(Boolean));
+    const bookingModelTexts = bookingData.map(b => getVal(b, ['Model Text 1']).toLowerCase());
 
-    const ageing90 = dataToUse.filter(d => parseInt(getVal(d, ['Ageing Days']) || '0') > 90).length;
-    const ageing60 = dataToUse.filter(d => {
-      const days = parseInt(getVal(d, ['Ageing Days']) || '0');
-      return days > 60 && days <= 90;
+    const checkIsBooked = (d) => {
+      const vin = getVal(d, ['Vehicle Identification Number', 'vin']).trim();
+      const salesOrder = getVal(d, ['Sales Order Number']).trim();
+      const modelCode = getVal(d, ['Model Sales Code']).toLowerCase().trim();
+
+      // 1. By Sales Order Presence
+      if (salesOrder) return true;
+      // 2. By VIN match in Booking sheet
+      if (vin && bookedVinSet.has(vin)) return true;
+      // 3. By Model Code lookup in Booking sheet (per user logic)
+      if (modelCode && bookingModelTexts.some(txt => txt.includes(modelCode))) return true;
+
+      return false;
+    };
+
+    const bookedCount = filteredInvData.filter(checkIsBooked).length;
+    const openCount = total - bookedCount;
+
+    // Opening Stock: Before current month & not booked
+    const currentMonthLabel = timeLabels.currLabel;
+    const openingStock = filteredInvData.filter(d => {
+      const month = getMonthStr(getVal(d, ['GRN Date']));
+      return month !== currentMonthLabel && !checkIsBooked(d);
     }).length;
 
+    const ageing90 = filteredInvData.filter(d => parseInt(getVal(d, ['Ageing Days']) || '0') > 90).length;
+
     return [
-      { label: 'Total Stock', v1: 0, v2: total },
-      { label: 'Open Stock (Avail)', v1: 0, v2: open, sub2: total ? Math.round((open/total)*100)+'%' : '-' },
-      { label: 'Customer Booked', v1: 0, v2: booked, sub2: total ? Math.round((booked/total)*100)+'%' : '-' },
-      { label: 'Ageing (60-90D)', v1: 0, v2: ageing60 },
-      { label: 'Ageing (>90D)', v1: 0, v2: ageing90 },
+      { label: 'Total Inventory', v1: 0, v2: total },
+      { label: 'Opening Stock', v1: 0, v2: openingStock, sub2: total ? Math.round((openingStock/total)*100)+'%' : '-' },
+      { label: 'Available (Open)', v1: 0, v2: openCount, sub2: total ? Math.round((openCount/total)*100)+'%' : '-' },
+      { label: 'Customer Booked', v1: 0, v2: bookedCount, sub2: total ? Math.round((bookedCount/total)*100)+'%' : '-' },
+      { label: 'Ageing (>90 Days)', v1: 0, v2: ageing90 },
     ];
-  }, [filteredInvData, invData]);
+  }, [filteredInvData, bookingData, timeLabels]);
 
   const sourceStats = useMemo(() => {
     const sourceDataset = filteredLeadData.length > 0 ? filteredLeadData : filteredOppData;
@@ -568,34 +579,34 @@ export default function App() {
   // --- VIEWS ---
   const DashboardView = () => (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 animate-fade-in">
-       <div className="bg-white rounded-lg card-shadow p-2.5 flex flex-col hover:border-blue-200 border border-transparent transition-all group cursor-pointer" onClick={() => { setDetailedMetric('Inquiries'); setViewMode('detailed'); }}>
+       <div className="bg-white rounded-lg card-shadow p-2 flex flex-col hover:border-blue-200 border border-transparent transition-all group cursor-pointer" onClick={() => { setDetailedMetric('Inquiries'); setViewMode('detailed'); }}>
           <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
             <LayoutDashboard className="w-3 h-3 text-blue-600" />
-            <h3 className="font-bold text-slate-800 text-[11px] uppercase tracking-tight">Sales Funnel</h3>
+            <h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Sales Funnel</h3>
           </div>
           <ComparisonTable rows={funnelStats} headers={[timeLabels.prevLabel, timeLabels.currLabel]} updatedAt={timestamps.opportunities} />
        </div>
 
-       <div className="bg-white rounded-lg card-shadow p-2.5 flex flex-col border border-transparent transition-all">
+       <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
           <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
             <Car className="w-3 h-3 text-indigo-600" />
-            <h3 className="font-bold text-slate-800 text-[11px] uppercase tracking-tight">Inventory Stock</h3>
+            <h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">System Inventory</h3>
           </div>
           <ComparisonTable rows={inventoryStats} headers={['', 'Stock']} updatedAt={timestamps.inventory} />
        </div>
 
-       <div className="bg-white rounded-lg card-shadow p-2.5 flex flex-col border border-transparent transition-all">
+       <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
           <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
             <TrendingUp className="w-3 h-3 text-emerald-600" />
-            <h3 className="font-bold text-slate-800 text-[11px] uppercase tracking-tight">Top Channels</h3>
+            <h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Channels</h3>
           </div>
           <ComparisonTable rows={sourceStats.length ? sourceStats : [{label: 'No Data', v1:0, v2:0}]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} updatedAt={timestamps.leads} />
        </div>
 
-       <div className="bg-white rounded-lg card-shadow p-2.5 flex flex-col border border-transparent transition-all">
+       <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
           <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
             <FileSpreadsheet className="w-3 h-3 text-purple-600" />
-            <h3 className="font-bold text-slate-800 text-[11px] uppercase tracking-tight">Value Added Serv.</h3>
+            <h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Value Added</h3>
           </div>
           <ComparisonTable rows={[
                {label: 'Finance Pen.', v1: 0, v2: 0},
@@ -605,29 +616,29 @@ export default function App() {
            ]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} />
        </div>
 
-       <div className="bg-white rounded-lg card-shadow p-2.5 flex flex-col border border-transparent transition-all">
+       <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
           <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
             <Users className="w-3 h-3 text-orange-600" />
-            <h3 className="font-bold text-slate-800 text-[11px] uppercase tracking-tight">Sales Activity</h3>
+            <h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Sales Ops</h3>
           </div>
           <ComparisonTable rows={[
                {label: 'Monthly Bookings', v1: funnelStats[3]?.v1 || 0, v2: funnelStats[3]?.v2 || 0},
                {label: 'Monthly Retails', v1: funnelStats[4]?.v1 || 0, v2: funnelStats[4]?.v2 || 0},
-               {label: 'Dealer Stock Whl.', v1: 0, v2: 0},
-               {label: 'Corporate Sales', v1: 0, v2: 0}
+               {label: 'Stock Whl.', v1: 0, v2: 0},
+               {label: 'Corp. Sales', v1: 0, v2: 0}
            ]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} updatedAt={timestamps.opportunities} />
        </div>
 
-       <div className="bg-white rounded-lg card-shadow p-2.5 flex flex-col border border-transparent transition-all">
+       <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
           <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
             <DollarSign className="w-3 h-3 text-rose-600" />
-            <h3 className="font-bold text-slate-800 text-[11px] uppercase tracking-tight">Profitability</h3>
+            <h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Efficiency</h3>
           </div>
           <ComparisonTable rows={[
-               {label: 'Avg. Margin/Car', v1: 0, v2: 0, type: 'currency'},
+               {label: 'Margin/Car', v1: 0, v2: 0, type: 'currency'},
                {label: 'Total Margin', v1: 0, v2: 0, type: 'currency'},
-               {label: 'Service Revenue', v1: 0, v2: 0, type: 'currency'},
-               {label: 'Consultant Prod.', v1: 0, v2: 0},
+               {label: 'Revenue', v1: 0, v2: 0, type: 'currency'},
+               {label: 'Productivity', v1: 0, v2: 0},
            ]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} />
        </div>
     </div>
@@ -661,74 +672,62 @@ export default function App() {
 
     return (
       <div className="space-y-3 animate-fade-in">
-        <div className="bg-white p-2.5 rounded-lg shadow-sm border border-slate-200 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <button onClick={() => setViewMode('dashboard')} className="p-1 hover:bg-slate-100 rounded transition-colors">
-               <ArrowDownRight className="w-4 h-4 text-slate-500 rotate-135" />
-            </button>
-            <h2 className="text-sm font-bold text-slate-900 uppercase tracking-tighter italic">{detailedMetric} Deep Analytics</h2>
-          </div>
+        <div className="bg-white p-2.5 rounded-lg shadow-sm border border-slate-200 flex items-center gap-2">
+          <button onClick={() => setViewMode('dashboard')} className="p-1 hover:bg-slate-100 rounded transition-colors"><ArrowDownRight className="w-4 h-4 text-slate-500 rotate-135" /></button>
+          <h2 className="text-sm font-bold text-slate-900 uppercase tracking-tighter">Graphics Analysis</h2>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-          <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
-             <h3 className="font-bold text-slate-800 mb-3 text-[10px] uppercase tracking-wider">Consultant Performance (Top 10)</h3>
-             <div className="h-56">
-               <ResponsiveContainer width="100%" height="100%">
-                 <BarChart data={consultantMix} layout="vertical">
-                   <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
-                   <XAxis type="number" hide />
-                   <YAxis dataKey="name" type="category" width={80} tick={{fontSize: 8, fontWeight: 600}} axisLine={false} tickLine={false} />
-                   <RechartsTooltip cursor={{fill: '#f8fafc'}} contentStyle={{fontSize: '10px', borderRadius: '8px'}} />
-                   <Bar dataKey="value" fill="#2563eb" radius={[0, 4, 4, 0]} barSize={12} />
-                 </BarChart>
-               </ResponsiveContainer>
-             </div>
+          <div className="bg-white p-3 rounded-lg shadow-sm border border-slate-200 h-64">
+             <h3 className="font-bold text-slate-800 mb-2 text-[9px] uppercase tracking-wider">Top 10 SC Performance</h3>
+             <ResponsiveContainer width="100%" height="90%">
+               <BarChart data={consultantMix} layout="vertical">
+                 <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
+                 <XAxis type="number" hide />
+                 <YAxis dataKey="name" type="category" width={80} tick={{fontSize: 7, fontWeight: 700}} axisLine={false} tickLine={false} />
+                 <RechartsTooltip cursor={{fill: '#f8fafc'}} contentStyle={{fontSize: '9px'}} />
+                 <Bar dataKey="value" fill="#2563eb" radius={[0, 4, 4, 0]} barSize={10} />
+               </BarChart>
+             </ResponsiveContainer>
           </div>
 
-          <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
-             <h3 className="font-bold text-slate-800 mb-3 text-[10px] uppercase tracking-wider">Lead Conversion Funnel</h3>
-             <div className="h-56">
-               <ResponsiveContainer width="100%" height="100%">
-                 <BarChart data={funnelMix}>
-                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                   <XAxis dataKey="name" tick={{fontSize: 8}} />
-                   <YAxis tick={{fontSize: 8}} />
-                   <RechartsTooltip contentStyle={{fontSize: '10px'}} />
-                   <Bar dataKey="val" fill="#10b981" radius={[4, 4, 0, 0]} barSize={30} />
-                 </BarChart>
-               </ResponsiveContainer>
-             </div>
+          <div className="bg-white p-3 rounded-lg shadow-sm border border-slate-200 h-64">
+             <h3 className="font-bold text-slate-800 mb-2 text-[9px] uppercase tracking-wider">Conversion Pipeline</h3>
+             <ResponsiveContainer width="100%" height="90%">
+               <BarChart data={funnelMix}>
+                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                 <XAxis dataKey="name" tick={{fontSize: 7}} />
+                 <YAxis tick={{fontSize: 7}} />
+                 <RechartsTooltip contentStyle={{fontSize: '9px'}} />
+                 <Bar dataKey="val" fill="#10b981" radius={[4, 4, 0, 0]} barSize={25} />
+               </BarChart>
+             </ResponsiveContainer>
           </div>
 
-          <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
-             <h3 className="font-bold text-slate-800 mb-3 text-[10px] uppercase tracking-wider">Volume Trend</h3>
-             <div className="h-56">
-               <ResponsiveContainer width="100%" height="100%">
-                 <LineChart data={trendData}>
-                   <CartesianGrid strokeDasharray="3 3" />
-                   <XAxis dataKey="name" tick={{fontSize: 8}} />
-                   <YAxis tick={{fontSize: 8}} />
-                   <RechartsTooltip contentStyle={{fontSize: '10px'}} />
-                   <Line type="monotone" dataKey="value" stroke="#2563eb" strokeWidth={2} dot={{ r: 3 }} />
-                 </LineChart>
-               </ResponsiveContainer>
-             </div>
+          <div className="bg-white p-3 rounded-lg shadow-sm border border-slate-200 h-64">
+             <h3 className="font-bold text-slate-800 mb-2 text-[9px] uppercase tracking-wider">Volume Trendline</h3>
+             <ResponsiveContainer width="100%" height="90%">
+               <LineChart data={trendData}>
+                 <CartesianGrid strokeDasharray="3 3" />
+                 <XAxis dataKey="name" tick={{fontSize: 7}} />
+                 <YAxis tick={{fontSize: 7}} />
+                 <RechartsTooltip contentStyle={{fontSize: '9px'}} />
+                 <Line type="monotone" dataKey="value" stroke="#2563eb" strokeWidth={2} dot={{ r: 3 }} />
+               </LineChart>
+             </ResponsiveContainer>
           </div>
           
-          <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
-             <h3 className="font-bold text-slate-800 mb-3 text-[10px] uppercase tracking-wider text-center">Model Mix (Inquiries)</h3>
-             <div className="h-56 flex justify-center">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={modelMix} innerRadius={45} outerRadius={70} paddingAngle={4} dataKey="value" nameKey="name">
-                      {modelMix.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
-                    </Pie>
-                    <RechartsTooltip />
-                    <Legend iconSize={8} wrapperStyle={{fontSize: '9px', fontWeight: 600}} />
-                  </PieChart>
-                </ResponsiveContainer>
-             </div>
+          <div className="bg-white p-3 rounded-lg shadow-sm border border-slate-200 h-64">
+             <h3 className="font-bold text-slate-800 mb-2 text-[9px] uppercase tracking-wider text-center">Model Distribution</h3>
+             <ResponsiveContainer width="100%" height="90%">
+               <PieChart>
+                 <Pie data={modelMix} innerRadius={40} outerRadius={60} paddingAngle={4} dataKey="value" nameKey="name">
+                   {modelMix.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
+                 </Pie>
+                 <RechartsTooltip />
+                 <Legend iconSize={7} wrapperStyle={{fontSize: '8px', fontWeight: 700}} />
+               </PieChart>
+             </ResponsiveContainer>
           </div>
         </div>
       </div>
@@ -738,18 +737,18 @@ export default function App() {
   const TableView = () => (
     <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
        <div className="overflow-x-auto">
-         <table className="w-full text-left text-[11px] text-slate-600">
-           <thead className="bg-slate-50/50 text-slate-400 font-bold border-b border-slate-200 uppercase tracking-tighter">
+         <table className="w-full text-left text-[10px] text-slate-600">
+           <thead className="bg-slate-50 text-slate-400 font-bold border-b border-slate-200 uppercase tracking-tighter">
              <tr><th className="p-2">ID</th><th className="p-2">Customer</th><th className="p-2">Model</th><th className="p-2">Date</th><th className="p-2">Status</th></tr>
            </thead>
            <tbody className="divide-y divide-slate-100">
              {(filteredOppData.length > 0 ? filteredOppData : filteredLeadData).slice(0, 50).map((row, idx) => (
                <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                 <td className="p-2 font-mono text-slate-400 text-[9px]">{getVal(row, ['id', 'leadid', 'vin'])}</td>
+                 <td className="p-2 font-mono text-slate-400 text-[8px]">{getVal(row, ['id', 'leadid', 'vin'])}</td>
                  <td className="p-2 font-semibold text-slate-800">{getVal(row, ['customer', 'name']) || 'Anonymous'}</td>
-                 <td className="p-2">{getVal(row, ['modelline', 'Model Line']) || 'N/A'}</td>
+                 <td className="p-2">{getVal(row, ['modelline', 'Model Line'])}</td>
                  <td className="p-2">{getVal(row, ['createdon', 'createddate'])}</td>
-                 <td className="p-2"><span className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-100 text-[8px] font-bold">{getVal(row, ['status', 'qualificationlevel', 'Description of Primary Status']) || 'Active'}</span></td>
+                 <td className="p-2"><span className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-100 text-[8px] font-bold">{getVal(row, ['status', 'qualificationlevel']) || 'Active'}</span></td>
                </tr>
              ))}
            </tbody>
@@ -768,40 +767,40 @@ export default function App() {
            <div className="flex items-center gap-2">
              <div className="w-6 h-6 bg-blue-600 rounded flex items-center justify-center text-white"><Car className="w-3.5 h-3.5" /></div>
              <div>
-                <h1 className="text-[11px] font-black text-slate-900 leading-none uppercase tracking-tighter italic">Sales IQ</h1>
-                <div className="text-[7px] text-slate-400 uppercase font-bold tracking-widest leading-none mt-0.5">{timeLabels.currLabel} Snapshot</div>
+                <h1 className="text-[10px] font-black text-slate-900 leading-none uppercase tracking-tighter italic">Sales IQ</h1>
+                <div className="text-[6px] text-slate-400 uppercase font-bold tracking-widest leading-none mt-0.5">{timeLabels.currLabel} Snapshot</div>
              </div>
            </div>
 
            <div className="flex items-center gap-2">
               <div className="flex bg-slate-100 p-0.5 rounded border border-slate-200">
-                <button onClick={() => setViewMode('dashboard')} className={`px-2 py-0.5 rounded text-[9px] font-extrabold ${viewMode === 'dashboard' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>DASHBOARD</button>
-                <button onClick={() => setViewMode('detailed')} className={`px-2 py-0.5 rounded text-[9px] font-extrabold ${viewMode === 'detailed' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>ANALYTICS</button>
-                <button onClick={() => setViewMode('table')} className={`px-2 py-0.5 rounded text-[9px] font-extrabold ${viewMode === 'table' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>RECORDS</button>
+                <button onClick={() => setViewMode('dashboard')} className={`px-2 py-0.5 rounded text-[8px] font-extrabold ${viewMode === 'dashboard' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>DASHBOARD</button>
+                <button onClick={() => setViewMode('detailed')} className={`px-2 py-0.5 rounded text-[8px] font-extrabold ${viewMode === 'detailed' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>ANALYTICS</button>
+                <button onClick={() => setViewMode('table')} className={`px-2 py-0.5 rounded text-[8px] font-extrabold ${viewMode === 'table' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>RECORDS</button>
               </div>
-              <button onClick={() => setShowImport(true)} className="bg-slate-900 text-white px-2.5 py-0.5 rounded text-[9px] font-bold hover:bg-slate-800 flex items-center gap-1"><Upload className="w-2.5 h-2.5" /> IMPORT</button>
-              <button onClick={clearData} className="p-0.5 text-rose-400 hover:bg-rose-50 rounded transition-colors" title="Clear System Memory"><Trash2 className="w-3 h-3" /></button>
+              <button onClick={() => setShowImport(true)} className="bg-slate-900 text-white px-2.5 py-0.5 rounded text-[8px] font-bold hover:bg-slate-800 flex items-center gap-1"><Upload className="w-2.5 h-2.5" /> IMPORT</button>
+              <button onClick={clearData} className="p-0.5 text-rose-400 hover:bg-rose-50 rounded transition-colors"><Trash2 className="w-3 h-3" /></button>
            </div>
          </div>
          
          <div className="border-t border-slate-100 bg-white px-3 py-1 flex items-center gap-2.5 overflow-x-auto no-scrollbar">
             <div className="flex items-center gap-2">
-              <span className="text-[8px] font-black text-slate-400 uppercase flex items-center gap-1 min-w-max"><Filter className="w-2.5 h-2.5" /> FILTERS</span>
+              <span className="text-[7px] font-black text-slate-400 uppercase flex items-center gap-1 min-w-max"><Filter className="w-2 h-2" /> FILTERS</span>
               
-              <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 h-6">
-                <UserCheck className="w-2.5 h-2.5 text-slate-400" />
-                <select className="bg-transparent text-[9px] font-bold text-slate-700 outline-none min-w-[80px]" value={filters.consultant} onChange={e => setFilters({...filters, consultant: e.target.value})}>
+              <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded px-1 py-0.5 h-5">
+                <UserCheck className="w-2 h-2 text-slate-400" />
+                <select className="bg-transparent text-[8px] font-bold text-slate-700 outline-none min-w-[70px]" value={filters.consultant} onChange={e => setFilters({...filters, consultant: e.target.value})}>
                    <option value="All">All SCs</option>
                    {consultantOptions.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
 
-              <select className="bg-slate-50 border border-slate-200 rounded px-2 py-0.5 text-[9px] font-bold text-slate-700 outline-none h-6" value={filters.model} onChange={e => setFilters({...filters, model: e.target.value})}>
+              <select className="bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 text-[8px] font-bold text-slate-700 outline-none h-5" value={filters.model} onChange={e => setFilters({...filters, model: e.target.value})}>
                  <option value="All">All Models</option>
                  {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
 
-              <select className="bg-slate-50 border border-slate-200 rounded px-2 py-0.5 text-[9px] font-bold text-slate-700 outline-none h-6" value={filters.location} onChange={e => setFilters({...filters, location: e.target.value})}>
+              <select className="bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 text-[8px] font-bold text-slate-700 outline-none h-5" value={filters.location} onChange={e => setFilters({...filters, location: e.target.value})}>
                  <option value="All">All Branches</option>
                  {locationOptions.map(l => <option key={l} value={l}>{l}</option>)}
               </select>
@@ -816,8 +815,8 @@ export default function App() {
          </div>
        </header>
 
-       <main className="max-w-[1400px] mx-auto px-3 py-3">
-         {successMsg && <div className="bg-emerald-600 text-white rounded shadow-sm px-3 py-1.5 text-[10px] font-black mb-3 animate-fade-in flex items-center gap-2 uppercase tracking-wide"><CheckCircle className="w-3 h-3" /> {successMsg}</div>}
+       <main className="max-w-[1400px] mx-auto px-3 py-2.5">
+         {successMsg && <div className="bg-emerald-600 text-white rounded shadow-sm px-3 py-1 text-[9px] font-black mb-2 animate-fade-in flex items-center gap-2 uppercase tracking-wide"><CheckCircle className="w-2.5 h-2.5" /> {successMsg}</div>}
          {viewMode === 'dashboard' && <DashboardView />}
          {viewMode === 'detailed' && <DetailedView />}
          {viewMode === 'table' && <TableView />}
