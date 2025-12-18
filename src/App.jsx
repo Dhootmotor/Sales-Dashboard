@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell 
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line 
 } from 'recharts';
 import { 
   LayoutDashboard, Upload, Filter, TrendingUp, TrendingDown, 
   Users, Car, DollarSign, ChevronDown, FileSpreadsheet, 
   ArrowUpRight, ArrowDownRight, 
-  Clock, X, CheckCircle, Download, Trash2, Calendar, AlertTriangle, Database, HardDrive
+  Clock, X, CheckCircle, Download, Trash2, Calendar, AlertTriangle, Database, HardDrive, UserCheck
 } from 'lucide-react';
 
 /**
@@ -35,7 +35,7 @@ try {
   if (supabaseUrl && supabaseAnonKey) {
     supabase = createClient(supabaseUrl, supabaseAnonKey);
   } else {
-    console.warn("Supabase credentials missing. App will default to Local Storage mode until configured.");
+    console.warn("Supabase credentials missing. App will default to Local Storage mode.");
   }
 } catch (e) {
   console.error("Supabase Initialization Error:", e);
@@ -63,7 +63,7 @@ const GlobalStyles = () => (
     
     .rotate-135 { transform: rotate(135deg); }
     
-    /* Ensure charts have a consistent look */
+    /* Chart Overrides */
     .recharts-cartesian-grid-horizontal line,
     .recharts-cartesian-grid-vertical line {
       stroke: #f1f5f9;
@@ -71,6 +71,31 @@ const GlobalStyles = () => (
     .recharts-text {
       fill: #64748b;
       font-size: 11px;
+    }
+    
+    .comparison-toggle {
+      position: relative;
+      display: flex;
+      background: #f1f5f9;
+      padding: 2px;
+      border-radius: 12px;
+      cursor: pointer;
+      user-select: none;
+    }
+    
+    .comparison-toggle-item {
+      padding: 6px 12px;
+      font-size: 10px;
+      font-weight: 700;
+      border-radius: 10px;
+      transition: all 0.2s ease;
+      z-index: 1;
+    }
+    
+    .comparison-toggle-active {
+      background: white;
+      color: #2563eb;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     }
   `}</style>
 );
@@ -99,7 +124,7 @@ const parseCSV = (text) => {
   let headerIndex = 0;
   for (let i = 0; i < Math.min(lines.length, 20); i++) {
     const rawLine = lines[i].toLowerCase();
-    const keywords = ['id', 'lead id', 'order number', 'vin', 'company code'];
+    const keywords = ['id', 'lead id', 'order number', 'vin', 'company code', 'vehicle identification number'];
     if (keywords.some(k => rawLine.includes(k))) {
       headerIndex = i;
       break;
@@ -130,7 +155,7 @@ const uploadToSupabase = async (userId, tableName, data) => {
     user_id: userId,
     id: tableName === 'opportunities' ? (item['id'] || item['opportunityid']) : undefined,
     leadid: tableName === 'leads' ? (item['leadid'] || item['lead id']) : undefined,
-    vin: tableName === 'inventory' ? (item['vehicleidentificationnumber'] || item['vin']) : undefined
+    vin: tableName === 'inventory' ? (item['vehicleidentificationnumber'] || item['vin'] || item['Vehicle Identification Number']) : undefined
   }));
 
   const conflictColumn = tableName === 'opportunities' ? 'id' : (tableName === 'leads' ? 'leadid' : 'vin');
@@ -147,7 +172,7 @@ const mergeLocalData = (currentData, newData, type) => {
   const getKey = (item) => {
     if (type === 'opportunities') return item['id'] || item['opportunityid'];
     if (type === 'leads') return item['leadid'] || item['lead id'];
-    if (type === 'inventory') return item['vehicleidentificationnumber'] || item['vin'];
+    if (type === 'inventory') return item['vehicleidentificationnumber'] || item['vin'] || item['Vehicle Identification Number'];
     return Math.random().toString();
   };
 
@@ -207,7 +232,7 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) =>
              {mode === 'cloud' ? (
                 <>Sync data with your <strong>Supabase SQL Database</strong>. High performance, relational storage.</>
              ) : (
-                <><strong>Local Mode:</strong> Data is saved in your browser's private storage (unreliable for large sets).</>
+                <><strong>Local Mode:</strong> Data is saved in your browser's private storage.</>
              )}
           </div>
 
@@ -366,7 +391,6 @@ export default function App() {
     const currMonth = maxDate; 
     let prevMonth = new Date(currMonth);
     
-    // Switch comparison period based on timeView (CY = MoM, LY = YoY)
     if (timeView === 'CY') {
       prevMonth.setMonth(currMonth.getMonth() - 1);
     } else {
@@ -442,7 +466,7 @@ export default function App() {
   
   const allDataForFilters = useMemo(() => [...oppData, ...leadData, ...invData], [oppData, leadData, invData]);
   const locationOptions = useMemo(() => [...new Set(allDataForFilters.map(d => d['Dealer Code'] || d['dealercode']).filter(Boolean))].sort(), [allDataForFilters]);
-  const consultantOptions = useMemo(() => [...new Set(allDataForFilters.map(d => d['Assigned To'] || d['assignedto']).filter(Boolean))].sort(), [allDataForFilters]);
+  const consultantOptions = useMemo(() => [...new Set(allDataForFilters.map(d => d['Assigned To'] || d['assignedto'] || d['owner']).filter(Boolean))].sort(), [allDataForFilters]);
   const modelOptions = useMemo(() => [...new Set(allDataForFilters.map(d => d['modellinefe'] || d['Model Line']).filter(Boolean))].sort(), [allDataForFilters]);
 
   // --- METRICS ---
@@ -473,9 +497,30 @@ export default function App() {
 
   const inventoryStats = useMemo(() => {
     const total = filteredInvData.length;
-    const open = filteredInvData.filter(d => !['book', 'allot', 'block', 'invoice'].some(k => (d['Primary Status'] || d['primarystatus'] || '').toLowerCase().includes(k))).length;
-    const booked = filteredInvData.filter(d => ['allotted', 'booked', 'blocked'].some(k => (d['Primary Status'] || d['primarystatus'] || '').toLowerCase().includes(k))).length;
-    const ageing = filteredInvData.filter(d => parseInt(d['Ageing Days'] || d['ageingdays'] || '0') > 90).length;
+    // Handle the specific column headings from EXPORT Inventory.csv
+    const getVal = (d, keys) => {
+      for(let k of keys) {
+        if (d[k] !== undefined) return d[k];
+        if (d[k.toLowerCase().replace(/ /g, '')] !== undefined) return d[k.toLowerCase().replace(/ /g, '')];
+      }
+      return '';
+    };
+
+    const open = filteredInvData.filter(d => {
+      const status = (getVal(d, ['Primary Status', 'Description of Primary Status', 'primarystatus']) || '').toLowerCase();
+      return !['book', 'allot', 'block', 'invoice'].some(k => status.includes(k));
+    }).length;
+
+    const booked = filteredInvData.filter(d => {
+      const status = (getVal(d, ['Primary Status', 'Description of Primary Status', 'primarystatus']) || '').toLowerCase();
+      return ['allotted', 'booked', 'blocked'].some(k => status.includes(k));
+    }).length;
+
+    const ageing = filteredInvData.filter(d => {
+      const days = parseInt(getVal(d, ['Ageing Days', 'ageingdays']) || '0');
+      return days > 90;
+    }).length;
+
     return [
       { label: 'Total Inventory', v1: 0, v2: total },
       { label: 'Open Inventory', v1: 0, v2: open, sub2: total ? Math.round((open/total)*100)+'%' : '-' },
@@ -571,9 +616,18 @@ export default function App() {
   const DetailedView = () => {
     const consultantMix = useMemo(() => {
         const counts = {};
-        filteredOppData.forEach(d => { const c = d['Assigned To'] || d['assignedto']; if(c) counts[c] = (counts[c] || 0) + 1; });
+        filteredOppData.forEach(d => { const c = d['Assigned To'] || d['assignedto'] || d['owner']; if(c) counts[c] = (counts[c] || 0) + 1; });
         return Object.entries(counts).map(([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value);
     }, [filteredOppData]);
+
+    const trendData = useMemo(() => {
+      const months = {};
+      oppData.slice(-100).forEach(d => {
+        const m = getMonthStr(d['createdon'] || d['createddate']);
+        months[m] = (months[m] || 0) + 1;
+      });
+      return Object.entries(months).map(([name, value]) => ({ name, value }));
+    }, [oppData]);
 
     return (
       <div className="space-y-8 animate-fade-in">
@@ -588,19 +642,52 @@ export default function App() {
             </div>
           </div>
         </div>
-        <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200">
-           <h3 className="font-bold text-slate-800 mb-6 text-lg">Consultant Performance Distribution</h3>
-           <div className="h-96">
-             <ResponsiveContainer width="100%" height="100%">
-               <BarChart data={consultantMix} layout="vertical">
-                 <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
-                 <XAxis type="number" hide />
-                 <YAxis dataKey="name" type="category" width={140} tick={{fontSize: 11, fontWeight: 500}} axisLine={false} tickLine={false} />
-                 <RechartsTooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)'}} />
-                 <Bar dataKey="value" fill="#3b82f6" radius={[0, 6, 6, 0]} barSize={24} />
-               </BarChart>
-             </ResponsiveContainer>
-           </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200">
+             <h3 className="font-bold text-slate-800 mb-6 text-lg">Consultant Performance Distribution</h3>
+             <div className="h-80">
+               <ResponsiveContainer width="100%" height="100%">
+                 <BarChart data={consultantMix} layout="vertical">
+                   <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
+                   <XAxis type="number" hide />
+                   <YAxis dataKey="name" type="category" width={140} tick={{fontSize: 11, fontWeight: 500}} axisLine={false} tickLine={false} />
+                   <RechartsTooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)'}} />
+                   <Bar dataKey="value" fill="#3b82f6" radius={[0, 6, 6, 0]} barSize={24} />
+                 </BarChart>
+               </ResponsiveContainer>
+             </div>
+          </div>
+
+          <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200">
+             <h3 className="font-bold text-slate-800 mb-6 text-lg">Recent Monthly Inquiries Trend</h3>
+             <div className="h-80">
+               <ResponsiveContainer width="100%" height="100%">
+                 <LineChart data={trendData}>
+                   <CartesianGrid strokeDasharray="3 3" />
+                   <XAxis dataKey="name" />
+                   <YAxis />
+                   <RechartsTooltip contentStyle={{borderRadius: '12px'}} />
+                   <Line type="monotone" dataKey="value" stroke="#3b82f6" strokeWidth={3} dot={{ r: 6, fill: '#3b82f6' }} />
+                 </LineChart>
+               </ResponsiveContainer>
+             </div>
+          </div>
+          
+          <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200 lg:col-span-2">
+             <h3 className="font-bold text-slate-800 mb-6 text-lg">Source & Conversion Mix</h3>
+             <div className="h-80 flex flex-col md:flex-row gap-8">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={sourceStats} innerRadius={60} outerRadius={100} paddingAngle={5} dataKey="v2" nameKey="label">
+                      {sourceStats.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
+                    </Pie>
+                    <RechartsTooltip />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+             </div>
+          </div>
         </div>
       </div>
     );
@@ -669,23 +756,35 @@ export default function App() {
          )}
          
          <div className="border-t border-slate-100 bg-white/50 px-6 py-3 flex items-center gap-6 overflow-x-auto">
-            <div className="flex items-center gap-3">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5"><Filter className="w-3 h-3" /> Filters</span>
-              <select className="bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-semibold text-slate-700 focus:ring-2 focus:ring-blue-500/20 transition-all outline-none" value={filters.model} onChange={e => setFilters({...filters, model: e.target.value})}>
-                 <option value="All">All Vehicle Models</option>
+            <div className="flex items-center gap-4">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5 min-w-max"><Filter className="w-3 h-3" /> Filters:</span>
+              
+              {/* Consultant Filter */}
+              <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-2 py-1 shadow-sm">
+                <UserCheck className="w-3.5 h-3.5 text-slate-400" />
+                <select className="bg-transparent text-xs font-semibold text-slate-700 transition-all outline-none min-w-[140px]" value={filters.consultant} onChange={e => setFilters({...filters, consultant: e.target.value})}>
+                   <option value="All">All Consultants</option>
+                   {consultantOptions.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+
+              <select className="bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-semibold text-slate-700 focus:ring-2 focus:ring-blue-500/20 transition-all outline-none shadow-sm min-w-[150px]" value={filters.model} onChange={e => setFilters({...filters, model: e.target.value})}>
+                 <option value="All">All Models</option>
                  {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
-              <select className="bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-semibold text-slate-700 focus:ring-2 focus:ring-blue-500/20 transition-all outline-none" value={filters.location} onChange={e => setFilters({...filters, location: e.target.value})}>
+
+              <select className="bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-semibold text-slate-700 focus:ring-2 focus:ring-blue-500/20 transition-all outline-none shadow-sm min-w-[140px]" value={filters.location} onChange={e => setFilters({...filters, location: e.target.value})}>
                  <option value="All">All Locations</option>
                  {locationOptions.map(l => <option key={l} value={l}>{l}</option>)}
               </select>
             </div>
             
-            <div className="ml-auto flex items-center gap-3">
-               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Compare Period</span>
-               <div className="flex bg-slate-100 rounded-2xl border border-slate-200 p-1 shadow-inner">
-                 <button onClick={() => setTimeView('CY')} className={`px-4 py-1.5 text-[10px] font-bold rounded-xl transition-all ${timeView === 'CY' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>MoM (Month-on-Month)</button>
-                 <button onClick={() => setTimeView('LY')} className={`px-4 py-1.5 text-[10px] font-bold rounded-xl transition-all ${timeView === 'LY' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>YoY (Year-on-Year)</button>
+            <div className="ml-auto flex items-center gap-3 min-w-max">
+               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Comparison</span>
+               {/* Single Switchable Toggle for CY/LY */}
+               <div className="comparison-toggle" onClick={() => setTimeView(timeView === 'CY' ? 'LY' : 'CY')}>
+                  <div className={`comparison-toggle-item ${timeView === 'CY' ? 'comparison-toggle-active' : 'text-slate-400'}`}>CY (MoM)</div>
+                  <div className={`comparison-toggle-item ${timeView === 'LY' ? 'comparison-toggle-active' : 'text-slate-400'}`}>LY (YoY)</div>
                </div>
             </div>
          </div>
