@@ -30,6 +30,7 @@ const getEnv = (key) => {
 const supabaseUrl = getEnv('VITE_SUPABASE_URL');
 const supabaseAnonKey = getEnv('VITE_SUPABASE_ANON_KEY');
 
+// Initialize Supabase - No Firebase connection exists here.
 try {
   if (supabaseUrl && supabaseAnonKey) {
     supabase = createClient(supabaseUrl, supabaseAnonKey);
@@ -43,19 +44,38 @@ try {
 // --- STYLES ---
 const GlobalStyles = () => (
   <style>{`
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    
+    body {
+      font-family: 'Inter', sans-serif;
+    }
+
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: #f1f5f9; }
     ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-    .animate-fade-in { animation: fadeIn 0.5s ease-out forwards; }
+    
+    .animate-fade-in { animation: fadeIn 0.4s ease-out forwards; }
     .animate-fade-in-up { animation: fadeInUp 0.5s ease-out forwards; }
+    
     @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
     @keyframes fadeInUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    
     .rotate-135 { transform: rotate(135deg); }
+    
+    /* Ensure charts have a consistent look */
+    .recharts-cartesian-grid-horizontal line,
+    .recharts-cartesian-grid-vertical line {
+      stroke: #f1f5f9;
+    }
+    .recharts-text {
+      fill: #64748b;
+      font-size: 11px;
+    }
   `}</style>
 );
 
-const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658', '#8dd1e1'];
+const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#f97316'];
 
 // --- HELPERS ---
 const parseCSV = (text) => {
@@ -99,6 +119,8 @@ const parseCSV = (text) => {
 
   return { rows, rawHeaders }; 
 };
+
+// --- DATA HANDLERS (SUPABASE ONLY) ---
 
 const uploadToSupabase = async (userId, tableName, data) => {
   if (!supabase) throw new Error("Supabase client not initialized.");
@@ -170,35 +192,39 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) =>
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center backdrop-blur-sm">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-xl overflow-hidden animate-fade-in-up">
-        <div className="bg-slate-800 px-6 py-4 flex justify-between items-center">
-          <h2 className="text-white font-bold text-lg flex items-center gap-2">
-            <Upload className="w-5 h-5" /> Import Data ({mode === 'cloud' ? 'Supabase' : 'Local'})
+    <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center backdrop-blur-sm px-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden animate-fade-in-up border border-slate-200">
+        <div className="bg-slate-900 px-6 py-5 flex justify-between items-center">
+          <h2 className="text-white font-bold text-lg flex items-center gap-3">
+            <div className="p-1.5 bg-blue-500/20 rounded-lg"><Upload className="w-5 h-5 text-blue-400" /></div>
+            Import CSV to {mode === 'cloud' ? 'Supabase' : 'Local'}
           </h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
+          <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors p-1 hover:bg-slate-800 rounded-lg"><X className="w-6 h-6" /></button>
         </div>
         
-        <div className="p-6 space-y-6">
-          <div className="p-4 rounded-lg text-sm bg-blue-50 text-blue-800 border-blue-100">
+        <div className="p-8 space-y-6">
+          <div className="p-4 rounded-xl text-sm bg-blue-50 border border-blue-100 text-blue-700 leading-relaxed">
              {mode === 'cloud' ? (
-                <>Upload <strong>CSV Data</strong> to your Supabase Postgres database.</>
+                <>Sync data with your <strong>Supabase SQL Database</strong>. High performance, relational storage.</>
              ) : (
-                <><strong>Local Mode:</strong> Data is saved in your browser storage.</>
+                <><strong>Local Mode:</strong> Data is saved in your browser's private storage (unreliable for large sets).</>
              )}
           </div>
 
-          <div className="border-2 border-dashed border-slate-200 rounded-lg p-8 hover:border-blue-400 transition-colors bg-slate-50 relative group flex flex-col items-center justify-center text-center">
-                <FileSpreadsheet className="w-12 h-12 text-blue-600 mb-4" /> 
-                <div className="text-slate-700 font-semibold text-lg mb-1">{file ? file.name : "Click to Upload CSV"}</div>
+          <div className="border-2 border-dashed border-slate-200 rounded-2xl p-10 hover:border-blue-500 transition-all bg-slate-50 relative group flex flex-col items-center justify-center text-center cursor-pointer">
+                <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                  <FileSpreadsheet className="w-8 h-8 text-blue-600" /> 
+                </div>
+                <div className="text-slate-900 font-bold text-xl mb-2">{file ? file.name : "Choose CSV File"}</div>
+                <p className="text-slate-400 text-sm">Drag and drop or click to browse</p>
                 <input type="file" accept=".csv" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onChange={handleFileChange} />
           </div>
         </div>
 
-        <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-3">
-          <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-200 rounded-lg">Cancel</button>
-          <button onClick={processFiles} disabled={isUploading || !file} className={`px-4 py-2 text-sm font-bold text-white rounded-lg flex items-center gap-2 ${isUploading || !file ? 'bg-slate-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}>
-            {isUploading ? 'Processing...' : (mode === 'cloud' ? 'Upload to Supabase' : 'Save Locally')}
+        <div className="px-8 py-5 bg-slate-50 border-t border-slate-100 flex justify-end gap-3">
+          <button onClick={onClose} className="px-5 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-200 rounded-xl transition-colors">Cancel</button>
+          <button onClick={processFiles} disabled={isUploading || !file} className={`px-6 py-2.5 text-sm font-bold text-white rounded-xl flex items-center gap-2 transition-all shadow-lg ${isUploading || !file ? 'bg-slate-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 hover:shadow-blue-500/20'}`}>
+            {isUploading ? 'Uploading...' : 'Confirm Import'}
           </button>
         </div>
       </div>
@@ -210,13 +236,13 @@ const ComparisonTable = ({ rows, headers, timestamp }) => (
   <div className="flex flex-col h-full">
     <div className="overflow-x-auto flex-1">
       <table className="w-full text-sm text-left border-collapse">
-        <thead className="text-[10px] uppercase text-slate-400 bg-white border-b border-slate-100 font-bold tracking-wider">
+        <thead className="text-[10px] uppercase text-slate-400 bg-slate-50/50 border-b border-slate-100 font-bold tracking-wider">
           <tr>
-            <th className="py-2 pl-2 w-[28%]">Metric</th>
-            <th className="py-2 text-right w-[18%] px-1 border-l border-slate-50">{headers[0] || 'Prev'}</th>
-            <th className="py-2 text-right w-[18%] px-1 text-slate-300">%</th>
-            <th className="py-2 text-right w-[18%] px-1 border-l border-slate-50">{headers[1] || 'Curr'}</th>
-            <th className="py-2 text-right w-[18%] px-1 text-slate-300">%</th>
+            <th className="py-2.5 pl-3 w-[28%] rounded-tl-lg">Metric</th>
+            <th className="py-2.5 text-right w-[18%] px-2 border-l border-slate-100/50">{headers[0] || 'Prev'}</th>
+            <th className="py-2.5 text-right w-[18%] px-2 text-slate-300">%</th>
+            <th className="py-2.5 text-right w-[18%] px-2 border-l border-slate-100/50">{headers[1] || 'Curr'}</th>
+            <th className="py-2.5 text-right w-[18%] px-2 text-blue-400 rounded-tr-lg">%</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-50">
@@ -225,29 +251,29 @@ const ComparisonTable = ({ rows, headers, timestamp }) => (
             const v2 = row.v2 || 0;
             const isUp = v2 >= v1;
             const format = (val, type) => {
-               if (type === 'currency') return `₹ ${(val/100000).toFixed(2)} L`;
+               if (type === 'currency') return `₹ ${(val/100000).toFixed(1)} L`;
                return val.toLocaleString();
             };
 
             return (
-              <tr key={idx} className="hover:bg-slate-50/80 transition-colors text-xs">
-                <td className="py-2 pl-2 font-semibold text-slate-600 flex items-center gap-1.5 overflow-hidden text-ellipsis whitespace-nowrap">
-                   {isUp ? <ArrowUpRight className="w-3 h-3 text-emerald-500 shrink-0" /> : <ArrowDownRight className="w-3 h-3 text-rose-500 shrink-0" />}
-                   <span className="truncate" title={row.label}>{row.label}</span>
+              <tr key={idx} className="hover:bg-slate-50 transition-colors group">
+                <td className="py-2.5 pl-3 font-semibold text-slate-600 flex items-center gap-2 overflow-hidden text-ellipsis whitespace-nowrap">
+                   {isUp ? <ArrowUpRight className="w-3.5 h-3.5 text-emerald-500" /> : <ArrowDownRight className="w-3.5 h-3.5 text-rose-500" />}
+                   <span className="truncate group-hover:text-blue-600 transition-colors" title={row.label}>{row.label}</span>
                 </td>
-                <td className="py-2 text-right text-slate-500 font-mono px-1 border-l border-slate-50 border-dashed">{format(v1, row.type)}</td>
-                <td className="py-2 text-right text-slate-400 text-[10px] px-1">{row.sub1 || '-'}</td>
-                <td className="py-2 text-right font-bold text-slate-800 font-mono px-1 border-l border-slate-50 border-dashed">{format(v2, row.type)}</td>
-                <td className="py-2 text-right text-blue-600 font-semibold text-[10px] px-1">{row.sub2 || '-'}</td>
+                <td className="py-2.5 text-right text-slate-500 font-mono px-2 border-l border-slate-50 border-dashed">{format(v1, row.type)}</td>
+                <td className="py-2.5 text-right text-slate-300 text-[10px] px-2">{row.sub1 || '-'}</td>
+                <td className="py-2.5 text-right font-bold text-slate-800 font-mono px-2 border-l border-slate-50 border-dashed">{format(v2, row.type)}</td>
+                <td className="py-2.5 text-right text-blue-600 font-bold text-[10px] px-2">{row.sub2 || '-'}</td>
               </tr>
             );
           })}
         </tbody>
       </table>
     </div>
-    <div className="mt-auto pt-3 border-t border-slate-100 flex items-center justify-end gap-2 text-[10px] text-slate-400">
-      <Clock className="w-3 h-3" />
-      <span>Updated: {timestamp ? new Date().toLocaleTimeString() : 'Ready'}</span>
+    <div className="mt-auto pt-3 border-t border-slate-100 flex items-center justify-between px-1 text-[10px] text-slate-400">
+      <div className="flex items-center gap-1.5"><Clock className="w-3 h-3" /> {timestamp ? new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'Ready'}</div>
+      <div className="text-slate-300">Auto-refresh Active</div>
     </div>
   </div>
 );
@@ -267,7 +293,7 @@ export default function App() {
   const [filters, setFilters] = useState({ model: 'All', location: 'All', consultant: 'All' });
   const [storageMode, setStorageMode] = useState(supabase ? 'cloud' : 'local');
 
-  // --- INITIALIZATION & AUTH ---
+  // --- INITIALIZATION ---
   useEffect(() => {
     if (supabase) {
       const initAuth = async () => {
@@ -295,7 +321,7 @@ export default function App() {
           if (leads) setLeadData(leads);
           const { data: inventory } = await supabase.from('inventory').select('*').eq('user_id', user.id);
           if (inventory) setInvData(inventory);
-        } catch (e) { console.error("Cloud Fetch Error", e); }
+        } catch (e) { console.error("Supabase Fetch Error", e); }
       } else {
         try {
           const savedOpp = localStorage.getItem('dashboard_oppData');
@@ -304,7 +330,7 @@ export default function App() {
           if (savedOpp) setOppData(JSON.parse(savedOpp));
           if (savedLead) setLeadData(JSON.parse(savedLead));
           if (savedInv) setInvData(JSON.parse(savedInv));
-        } catch (e) { console.error("Local Storage Load Error", e); }
+        } catch (e) { console.error("Local Load Error", e); }
       }
     };
     loadData();
@@ -340,7 +366,7 @@ export default function App() {
     const currMonth = maxDate; 
     let prevMonth = new Date(currMonth);
     
-    // Switch comparison period based on timeView (CY vs LY)
+    // Switch comparison period based on timeView (CY = MoM, LY = YoY)
     if (timeView === 'CY') {
       prevMonth.setMonth(currMonth.getMonth() - 1);
     } else {
@@ -358,7 +384,7 @@ export default function App() {
     try {
       if (storageMode === 'cloud' && user) {
          const count = await uploadToSupabase(user.id, type, newData);
-         setSuccessMsg(`Synced ${count} records to Supabase`);
+         setSuccessMsg(`Synced ${count} records to Supabase SQL`);
          const { data } = await supabase.from(type).select('*').eq('user_id', user.id);
          if (type === 'opportunities') setOppData(data);
          else if (type === 'leads') setLeadData(data);
@@ -374,14 +400,14 @@ export default function App() {
       }
       setTimeout(() => setSuccessMsg(''), 5000);
     } catch (e) {
-      alert("Upload failed: " + e.message);
+      alert("Import failed: " + e.message);
     } finally {
       setIsUploading(false);
     }
   };
 
   const clearData = async () => {
-    if(window.confirm("Delete ALL data?")) {
+    if(window.confirm("Delete ALL data from your database?")) {
        if (storageMode === 'cloud' && user) {
           await supabase.from('opportunities').delete().eq('user_id', user.id);
           await supabase.from('leads').delete().eq('user_id', user.id);
@@ -392,7 +418,7 @@ export default function App() {
           localStorage.removeItem('dashboard_invData');
        }
        setOppData([]); setLeadData([]); setInvData([]);
-       setSuccessMsg("Data Cleared");
+       setSuccessMsg("All data has been cleared.");
        setTimeout(() => setSuccessMsg(''), 3000);
     }
   };
@@ -419,7 +445,7 @@ export default function App() {
   const consultantOptions = useMemo(() => [...new Set(allDataForFilters.map(d => d['Assigned To'] || d['assignedto']).filter(Boolean))].sort(), [allDataForFilters]);
   const modelOptions = useMemo(() => [...new Set(allDataForFilters.map(d => d['modellinefe'] || d['Model Line']).filter(Boolean))].sort(), [allDataForFilters]);
 
-  // --- CALCULATION LOGIC ---
+  // --- METRICS ---
   const funnelStats = useMemo(() => {
     if (!timeLabels.currLabel) return [];
     const getMonthData = (label) => filteredOppData.filter(d => getMonthStr(d['createdon'] || d['createddate']) === label);
@@ -470,39 +496,39 @@ export default function App() {
 
   // --- VIEWS ---
   const DashboardView = () => (
-    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 animate-fade-in">
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 animate-fade-in">
        {/* 1. Sales Funnel */}
-       <div className="rounded-lg shadow-sm border p-4 flex flex-col h-full hover:shadow-md transition-shadow cursor-pointer bg-white border-slate-200" onClick={() => { setDetailedMetric('Inquiries'); setViewMode('detailed'); }}>
-          <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-2">
-            <div className="bg-blue-50 p-1.5 rounded text-blue-600"><LayoutDashboard className="w-4 h-4" /></div>
-            <h3 className="font-bold text-slate-700">Sales Funnel</h3>
+       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col h-full hover:shadow-xl hover:shadow-blue-500/5 transition-all group cursor-pointer" onClick={() => { setDetailedMetric('Inquiries'); setViewMode('detailed'); }}>
+          <div className="flex items-center gap-3 mb-5 border-b border-slate-50 pb-4">
+            <div className="bg-blue-50 p-2 rounded-xl group-hover:bg-blue-600 group-hover:text-white transition-colors"><LayoutDashboard className="w-5 h-5 text-blue-600 group-hover:text-inherit" /></div>
+            <h3 className="font-bold text-slate-800 text-lg">Sales Funnel</h3>
           </div>
           <ComparisonTable rows={funnelStats} headers={[timeLabels.prevLabel, timeLabels.currLabel]} timestamp={true} />
        </div>
 
        {/* 2. Inventory */}
-       <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-4 flex flex-col h-full hover:shadow-md transition-shadow">
-          <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-2">
-            <div className="bg-indigo-50 p-1.5 rounded text-indigo-600"><Car className="w-4 h-4" /></div>
-            <h3 className="font-bold text-slate-700">Inventory</h3>
+       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col h-full hover:shadow-xl hover:shadow-indigo-500/5 transition-all group">
+          <div className="flex items-center gap-3 mb-5 border-b border-slate-50 pb-4">
+            <div className="bg-indigo-50 p-2 rounded-xl group-hover:bg-indigo-600 group-hover:text-white transition-colors"><Car className="w-5 h-5 text-indigo-600 group-hover:text-inherit" /></div>
+            <h3 className="font-bold text-slate-800 text-lg">Inventory</h3>
           </div>
           <ComparisonTable rows={inventoryStats} headers={['', 'Total']} timestamp={true} />
        </div>
 
        {/* 3. Lead Source */}
-       <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-4 flex flex-col h-full hover:shadow-md transition-shadow">
-          <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-2">
-            <div className="bg-emerald-50 p-1.5 rounded text-emerald-600"><TrendingUp className="w-4 h-4" /></div>
-            <h3 className="font-bold text-slate-700">Lead Source</h3>
+       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col h-full hover:shadow-xl hover:shadow-emerald-500/5 transition-all group">
+          <div className="flex items-center gap-3 mb-5 border-b border-slate-50 pb-4">
+            <div className="bg-emerald-50 p-2 rounded-xl group-hover:bg-emerald-600 group-hover:text-white transition-colors"><TrendingUp className="w-5 h-5 text-emerald-600 group-hover:text-inherit" /></div>
+            <h3 className="font-bold text-slate-800 text-lg">Lead Source</h3>
           </div>
           <ComparisonTable rows={sourceStats.length ? sourceStats : [{label: 'No Data', v1:0, v2:0}]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} timestamp={true} />
        </div>
 
        {/* 4. Cross-Sell */}
-       <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-4 flex flex-col h-full hover:shadow-md transition-shadow">
-          <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-2">
-            <div className="bg-purple-50 p-1.5 rounded text-purple-600"><FileSpreadsheet className="w-4 h-4" /></div>
-            <h3 className="font-bold text-slate-700">Cross-Sell</h3>
+       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col h-full hover:shadow-xl hover:shadow-purple-500/5 transition-all group">
+          <div className="flex items-center gap-3 mb-5 border-b border-slate-50 pb-4">
+            <div className="bg-purple-50 p-2 rounded-xl group-hover:bg-purple-600 group-hover:text-white transition-colors"><FileSpreadsheet className="w-5 h-5 text-purple-600 group-hover:text-inherit" /></div>
+            <h3 className="font-bold text-slate-800 text-lg">Cross-Sell</h3>
           </div>
           <ComparisonTable rows={[
                {label: 'Car Finance', v1: 0, v2: 0},
@@ -513,10 +539,10 @@ export default function App() {
        </div>
 
        {/* 5. Sales Management */}
-       <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-4 flex flex-col h-full hover:shadow-md transition-shadow">
-          <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-2">
-            <div className="bg-orange-50 p-1.5 rounded text-orange-600"><Users className="w-4 h-4" /></div>
-            <h3 className="font-bold text-slate-700">Sales Management</h3>
+       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col h-full hover:shadow-xl hover:shadow-orange-500/5 transition-all group">
+          <div className="flex items-center gap-3 mb-5 border-b border-slate-50 pb-4">
+            <div className="bg-orange-50 p-2 rounded-xl group-hover:bg-orange-600 group-hover:text-white transition-colors"><Users className="w-5 h-5 text-orange-600 group-hover:text-inherit" /></div>
+            <h3 className="font-bold text-slate-800 text-lg">Sales Management</h3>
           </div>
           <ComparisonTable rows={[
                {label: 'Bookings', v1: funnelStats[3]?.v1 || 0, v2: funnelStats[3]?.v2 || 0},
@@ -527,10 +553,10 @@ export default function App() {
        </div>
 
        {/* 6. Profit & Productivity */}
-       <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-4 flex flex-col h-full hover:shadow-md transition-shadow">
-          <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-2">
-            <div className="bg-rose-50 p-1.5 rounded text-rose-600"><DollarSign className="w-4 h-4" /></div>
-            <h3 className="font-bold text-slate-700">Profit & Productivity</h3>
+       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col h-full hover:shadow-xl hover:shadow-rose-500/5 transition-all group">
+          <div className="flex items-center gap-3 mb-5 border-b border-slate-50 pb-4">
+            <div className="bg-rose-50 p-2 rounded-xl group-hover:bg-rose-600 group-hover:text-white transition-colors"><DollarSign className="w-5 h-5 text-rose-600 group-hover:text-inherit" /></div>
+            <h3 className="font-bold text-slate-800 text-lg">Profit & Productivity</h3>
           </div>
           <ComparisonTable rows={[
                {label: 'New car Margin', v1: 0, v2: 0, type: 'currency'},
@@ -550,23 +576,28 @@ export default function App() {
     }, [filteredOppData]);
 
     return (
-      <div className="space-y-6 animate-fade-in">
-        <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200 flex items-center gap-3">
-          <button onClick={() => setViewMode('dashboard')} className="p-1 hover:bg-slate-100 rounded">
-             <ArrowDownRight className="w-5 h-5 text-slate-500 rotate-135" />
-          </button>
-          <h2 className="text-xl font-bold text-blue-700">{detailedMetric} Analysis</h2>
+      <div className="space-y-8 animate-fade-in">
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <button onClick={() => setViewMode('dashboard')} className="p-2 hover:bg-slate-100 rounded-xl transition-colors">
+               <ArrowDownRight className="w-6 h-6 text-slate-500 rotate-135" />
+            </button>
+            <div>
+              <h2 className="text-2xl font-bold text-slate-900">{detailedMetric} Deep-Dive</h2>
+              <p className="text-slate-400 text-sm">Granular analysis of performance metrics</p>
+            </div>
+          </div>
         </div>
-        <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
-           <h3 className="font-bold text-slate-700 mb-4">Consultant Performance</h3>
-           <div className="h-80">
+        <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200">
+           <h3 className="font-bold text-slate-800 mb-6 text-lg">Consultant Performance Distribution</h3>
+           <div className="h-96">
              <ResponsiveContainer width="100%" height="100%">
                <BarChart data={consultantMix} layout="vertical">
                  <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
                  <XAxis type="number" hide />
-                 <YAxis dataKey="name" type="category" width={110} tick={{fontSize: 10}} axisLine={false} tickLine={false} />
-                 <RechartsTooltip cursor={{fill: '#f8fafc'}} />
-                 <Bar dataKey="value" fill="#6366f1" radius={[0, 4, 4, 0]} barSize={18} />
+                 <YAxis dataKey="name" type="category" width={140} tick={{fontSize: 11, fontWeight: 500}} axisLine={false} tickLine={false} />
+                 <RechartsTooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)'}} />
+                 <Bar dataKey="value" fill="#3b82f6" radius={[0, 6, 6, 0]} barSize={24} />
                </BarChart>
              </ResponsiveContainer>
            </div>
@@ -576,20 +607,20 @@ export default function App() {
   };
 
   const TableView = () => (
-    <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
+    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
        <div className="overflow-x-auto">
-         <table className="w-full text-left text-xs text-slate-600">
-           <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
-             <tr><th className="p-3">ID</th><th className="p-3">Customer</th><th className="p-3">Model</th><th className="p-3">Date</th><th className="p-3">Status</th></tr>
+         <table className="w-full text-left text-sm text-slate-600">
+           <thead className="bg-slate-50/50 text-slate-400 font-bold border-b border-slate-200">
+             <tr><th className="p-4 uppercase text-[10px] tracking-widest">ID / Ref</th><th className="p-4 uppercase text-[10px] tracking-widest">Customer Name</th><th className="p-4 uppercase text-[10px] tracking-widest">Model</th><th className="p-4 uppercase text-[10px] tracking-widest">Created Date</th><th className="p-4 uppercase text-[10px] tracking-widest">Status</th></tr>
            </thead>
            <tbody className="divide-y divide-slate-100">
-             {(filteredOppData.length > 0 ? filteredOppData : filteredLeadData).slice(0, 50).map((row, idx) => (
-               <tr key={idx} className="hover:bg-blue-50/30">
-                 <td className="p-3 font-mono text-slate-500">{row['id'] || row['leadid'] || row['vin']}</td>
-                 <td className="p-3">{row['customer'] || row['name'] || '-'}</td>
-                 <td className="p-3">{row['modellinefe'] || row['modelline']}</td>
-                 <td className="p-3">{row['createdon'] || row['createddate'] || row['grndate']}</td>
-                 <td className="p-3">{row['status'] || row['qualificationlevel'] || row['primarystatus']}</td>
+             {(filteredOppData.length > 0 ? filteredOppData : filteredLeadData).slice(0, 100).map((row, idx) => (
+               <tr key={idx} className="hover:bg-blue-50/30 transition-colors">
+                 <td className="p-4 font-mono text-slate-400 text-xs">{row['id'] || row['leadid'] || row['vin']}</td>
+                 <td className="p-4 font-medium text-slate-800">{row['customer'] || row['name'] || 'Anonymous'}</td>
+                 <td className="p-4"><span className="px-2.5 py-1 bg-slate-100 rounded-lg text-xs font-semibold text-slate-600 border border-slate-200">{row['modellinefe'] || row['modelline'] || 'N/A'}</span></td>
+                 <td className="p-4 text-slate-500">{row['createdon'] || row['createddate'] || row['grndate']}</td>
+                 <td className="p-4"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide border ${row['status']?.toLowerCase().includes('won') ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-slate-50 text-slate-500 border-slate-200'}`}>{row['status'] || row['qualificationlevel'] || row['primarystatus'] || 'Active'}</span></td>
                </tr>
              ))}
            </tbody>
@@ -599,57 +630,68 @@ export default function App() {
   );
 
   return (
-    <div className="min-h-screen bg-slate-50/50 font-sans pb-10">
+    <div className="min-h-screen bg-slate-50/30 font-sans pb-16">
        <GlobalStyles />
        <ImportWizard isOpen={showImport} onClose={() => setShowImport(false)} onDataImported={handleDataImport} isUploading={isUploading} mode={storageMode} />
 
-       <header className="bg-white border-b border-slate-200 sticky top-0 z-40">
-         <div className="max-w-[1920px] mx-auto px-4 h-16 flex items-center justify-between">
-           <div className="flex items-center gap-3">
-             <div className="w-8 h-8 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-lg flex items-center justify-center text-white shadow-md"><Car className="w-5 h-5" /></div>
+       <header className="bg-white border-b border-slate-200 sticky top-0 z-40 backdrop-blur-md bg-white/90">
+         <div className="max-w-[1600px] mx-auto px-6 h-20 flex items-center justify-between">
+           <div className="flex items-center gap-4">
+             <div className="w-11 h-11 bg-gradient-to-tr from-blue-600 to-blue-400 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-blue-500/20"><Car className="w-6 h-6" /></div>
              <div>
-                <h1 className="text-lg font-bold text-slate-800 leading-tight">Sales Dashboard</h1>
-                <div className="text-[10px] text-slate-400">{timeLabels.currLabel} (Current) vs {timeLabels.prevLabel} (Prev)</div>
+                <h1 className="text-xl font-bold text-slate-900 leading-tight">Sales Intelligence</h1>
+                <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-tighter">
+                  <Database className="w-3 h-3" />
+                  <span>{timeLabels.currLabel} Snapshot</span>
+                </div>
              </div>
            </div>
 
-           <div className="flex items-center gap-4">
-              <div className={`px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider border ${storageMode === 'cloud' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-orange-50 text-orange-700 border-orange-200'}`}>
-                 {storageMode === 'cloud' ? 'Supabase Cloud' : 'Local Browser'}
+           <div className="flex items-center gap-6">
+              <div className={`px-3 py-1.5 rounded-xl text-[10px] font-bold uppercase tracking-widest border transition-all ${storageMode === 'cloud' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-orange-50 text-orange-700 border-orange-200'}`}>
+                 {storageMode === 'cloud' ? 'Supabase Sync On' : 'Local Storage Only'}
               </div>
-              <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200">
-                <button onClick={() => setViewMode('dashboard')} className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${viewMode === 'dashboard' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>Dashboard</button>
-                <button onClick={() => setViewMode('detailed')} className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${viewMode === 'detailed' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>Analysis</button>
-                <button onClick={() => setViewMode('table')} className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${viewMode === 'table' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>Data</button>
+              <div className="flex bg-slate-100 p-1.5 rounded-2xl border border-slate-200 shadow-inner">
+                <button onClick={() => setViewMode('dashboard')} className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${viewMode === 'dashboard' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>Dashboard</button>
+                <button onClick={() => setViewMode('detailed')} className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${viewMode === 'detailed' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>Analytics</button>
+                <button onClick={() => setViewMode('table')} className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${viewMode === 'table' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>Raw Data</button>
               </div>
-              <button onClick={() => setShowImport(true)} className="bg-slate-800 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-slate-700">Import</button>
-              <button onClick={clearData} className="bg-red-100 text-red-700 px-3 py-2 rounded-lg text-xs font-bold hover:bg-red-200" title="Clear All Data"><Trash2 className="w-3.5 h-3.5" /></button>
+              <div className="h-8 w-px bg-slate-200"></div>
+              <button onClick={() => setShowImport(true)} className="bg-slate-900 text-white px-5 py-2.5 rounded-xl text-xs font-bold hover:bg-slate-800 transition-all shadow-lg hover:shadow-slate-500/10 flex items-center gap-2"><Upload className="w-4 h-4" /> Import</button>
+              <button onClick={clearData} className="p-2.5 text-rose-500 hover:bg-rose-50 rounded-xl transition-colors border border-transparent hover:border-rose-100" title="Delete All Data"><Trash2 className="w-5 h-5" /></button>
            </div>
          </div>
-         {successMsg && <div className="bg-emerald-50 border-b border-emerald-100 px-4 py-2 text-xs font-bold text-emerald-700 text-center animate-fade-in">{successMsg}</div>}
          
-         <div className="border-t border-slate-100 bg-slate-50/50 px-4 py-2 flex items-center gap-4">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Filters:</span>
-            <select className="bg-white border border-slate-200 rounded px-2 py-1 text-xs" value={filters.model} onChange={e => setFilters({...filters, model: e.target.value})}>
-               <option value="All">All Models</option>
-               {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
-            </select>
-            <select className="bg-white border border-slate-200 rounded px-2 py-1 text-xs" value={filters.location} onChange={e => setFilters({...filters, location: e.target.value})}>
-               <option value="All">All Locations</option>
-               {locationOptions.map(l => <option key={l} value={l}>{l}</option>)}
-            </select>
+         {successMsg && (
+           <div className="bg-emerald-50 border-y border-emerald-100 px-6 py-2.5 text-xs font-bold text-emerald-700 flex items-center justify-center gap-2 animate-fade-in">
+             <CheckCircle className="w-4 h-4" /> {successMsg}
+           </div>
+         )}
+         
+         <div className="border-t border-slate-100 bg-white/50 px-6 py-3 flex items-center gap-6 overflow-x-auto">
+            <div className="flex items-center gap-3">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5"><Filter className="w-3 h-3" /> Filters</span>
+              <select className="bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-semibold text-slate-700 focus:ring-2 focus:ring-blue-500/20 transition-all outline-none" value={filters.model} onChange={e => setFilters({...filters, model: e.target.value})}>
+                 <option value="All">All Vehicle Models</option>
+                 {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+              <select className="bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-semibold text-slate-700 focus:ring-2 focus:ring-blue-500/20 transition-all outline-none" value={filters.location} onChange={e => setFilters({...filters, location: e.target.value})}>
+                 <option value="All">All Locations</option>
+                 {locationOptions.map(l => <option key={l} value={l}>{l}</option>)}
+              </select>
+            </div>
             
-            <div className="ml-auto flex items-center gap-2">
-               <span className="text-[10px] font-bold text-slate-400 uppercase mr-1">Compare:</span>
-               <div className="flex bg-white rounded border border-slate-200 p-0.5 shadow-sm">
-                 <button onClick={() => setTimeView('CY')} className={`px-3 py-1 text-[10px] font-bold rounded transition-colors ${timeView === 'CY' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>CY (Month-on-Month)</button>
-                 <button onClick={() => setTimeView('LY')} className={`px-3 py-1 text-[10px] font-bold rounded transition-colors ${timeView === 'LY' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>LY (Year-on-Year)</button>
+            <div className="ml-auto flex items-center gap-3">
+               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Compare Period</span>
+               <div className="flex bg-slate-100 rounded-2xl border border-slate-200 p-1 shadow-inner">
+                 <button onClick={() => setTimeView('CY')} className={`px-4 py-1.5 text-[10px] font-bold rounded-xl transition-all ${timeView === 'CY' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>MoM (Month-on-Month)</button>
+                 <button onClick={() => setTimeView('LY')} className={`px-4 py-1.5 text-[10px] font-bold rounded-xl transition-all ${timeView === 'LY' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>YoY (Year-on-Year)</button>
                </div>
             </div>
          </div>
        </header>
 
-       <main className="max-w-[1920px] mx-auto px-4 py-6">
+       <main className="max-w-[1600px] mx-auto px-6 py-10">
          {viewMode === 'dashboard' && <DashboardView />}
          {viewMode === 'detailed' && <DetailedView />}
          {viewMode === 'table' && <TableView />}
