@@ -136,11 +136,11 @@ const parseCSV = (text) => {
 const getVal = (d, keys) => {
   if (!d) return '';
   for(let k of keys) {
-    if (d[k] !== undefined && d[k] !== null) return d[k];
+    if (d[k] !== undefined && d[k] !== null) return String(d[k]);
     const normalized = k.toLowerCase().replace(/ /g, '');
-    if (d[normalized] !== undefined && d[normalized] !== null) return d[normalized];
+    if (d[normalized] !== undefined && d[normalized] !== null) return String(d[normalized]);
     const snake = k.toLowerCase().replace(/ /g, '_');
-    if (d[snake] !== undefined && d[snake] !== null) return d[snake];
+    if (d[snake] !== undefined && d[snake] !== null) return String(d[snake]);
   }
   return '';
 };
@@ -294,7 +294,7 @@ const ComparisonTable = ({ rows, headers, updatedAt }) => (
     </table>
     <div className="mt-auto pt-1.5 border-t border-slate-100 flex items-center justify-end px-1 text-[8px] text-slate-700 gap-1 font-bold uppercase tracking-tighter">
        <Clock className="w-2 h-2" />
-       <span>Refreshed: {updatedAt || 'Ready'}</span>
+       <span>Updated: {updatedAt || 'Ready'}</span>
     </div>
   </div>
 );
@@ -461,12 +461,27 @@ export default function App() {
   // --- FILTERING ---
   const getFilteredData = (data, dataType) => {
     return data.filter(item => {
-      const itemLoc = (getVal(item, ['Dealer Code', 'city']) || '').trim();
-      const itemCons = (getVal(item, ['Assigned To', 'owner']) || '').trim();
-      const itemModel = (getVal(item, ['modellinefe', 'modelline', 'Model Line']) || '').trim();
+      // Robust Branch/Location matching
+      const itemLocs = [
+        getVal(item, ['Dealer Code']),
+        getVal(item, ['Branch Name']),
+        getVal(item, ['city']),
+        getVal(item, ['Branch'])
+      ].map(v => v.trim()).filter(Boolean);
 
-      const matchLoc = filters.location === 'All' || itemLoc === filters.location;
-      const matchModel = filters.model === 'All' || itemModel === filters.model;
+      const matchLoc = filters.location === 'All' || itemLocs.includes(filters.location);
+
+      // Robust Model matching
+      const itemModels = [
+        getVal(item, ['modellinefe']),
+        getVal(item, ['modelline']),
+        getVal(item, ['Model Line'])
+      ].map(v => v.trim()).filter(Boolean);
+
+      const matchModel = filters.model === 'All' || itemModels.includes(filters.model);
+      
+      // Robust Consultant matching
+      const itemCons = (getVal(item, ['Assigned To', 'owner']) || '').trim();
       
       // IMPORTANT: Inventory records don't have Sales Consultants. 
       // We allow them to show regardless of Consultant filter.
@@ -484,7 +499,7 @@ export default function App() {
   const filteredInvData = useMemo(() => getFilteredData(invData, 'inventory'), [invData, filters]);
   
   const allDataForFilters = useMemo(() => [...oppData, ...leadData, ...invData], [oppData, leadData, invData]);
-  const locationOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['Dealer Code', 'city'])))].filter(Boolean).sort(), [allDataForFilters]);
+  const locationOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['Dealer Code', 'Branch Name', 'city'])))].filter(Boolean).sort(), [allDataForFilters]);
   const consultantOptions = useMemo(() => [...new Set(oppData.map(d => getVal(d, ['Assigned To'])))].filter(Boolean).sort(), [oppData]);
   const modelOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['modellinefe', 'Model Line'])))].filter(Boolean).sort(), [allDataForFilters]);
 
@@ -517,13 +532,13 @@ export default function App() {
   const inventoryStats = useMemo(() => {
     const total = filteredInvData.length;
     
-    // Improved logic for stock status based on EXPORT Inventory file
+    // Detailed logic for stock status based on EXPORT Inventory file
     const open = filteredInvData.filter(d => {
       const status = (getVal(d, ['Description of Primary Status', 'Primary Status']) || '').toLowerCase();
       // Exclude only sold/customer-allocated states
       const soldKeywords = ['allotted', 'booked', 'blocked', 'retail', 'delivered', 'allotment', 'invoice'];
       // Exception: "Incoming Invoice Created" contains "invoice" but is open stock
-      if (status.includes('incoming invoice created')) return true;
+      if (status.includes('incoming invoice created') || status.includes('status initial')) return true;
       return !soldKeywords.some(k => status.includes(k));
     }).length;
 
