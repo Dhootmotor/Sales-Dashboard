@@ -46,42 +46,46 @@ const GlobalStyles = () => (
     
     body {
       font-family: 'Inter', sans-serif;
-      background-color: #f8fafc;
-      color: #1e293b;
+      background-color: #f1f5f9;
+      color: #0f172a;
     }
 
     ::-webkit-scrollbar { width: 4px; height: 4px; }
     ::-webkit-scrollbar-track { background: #f1f5f9; }
     ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
     
-    .animate-fade-in { animation: fadeIn 0.3s ease-out forwards; }
+    .animate-fade-in { animation: fadeIn 0.2s ease-out forwards; }
     @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
     
     .comparison-toggle {
       display: flex;
-      background: #f1f5f9;
+      background: #e2e8f0;
       padding: 2px;
-      border-radius: 8px;
+      border-radius: 6px;
       cursor: pointer;
     }
     
     .comparison-toggle-item {
-      padding: 4px 10px;
+      padding: 3px 8px;
       font-size: 9px;
-      font-weight: 700;
-      border-radius: 6px;
-      transition: all 0.2s ease;
+      font-weight: 800;
+      border-radius: 4px;
+      transition: all 0.15s ease;
     }
     
     .comparison-toggle-active {
       background: white;
       color: #2563eb;
-      box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+      box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+    }
+
+    .card-shadow {
+      box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
     }
   `}</style>
 );
 
-const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#f97316'];
+const COLORS = ['#2563eb', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#f97316'];
 
 // --- HELPERS ---
 const parseCSV = (text) => {
@@ -246,14 +250,14 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) =>
 
 const ComparisonTable = ({ rows, headers, updatedAt }) => (
   <div className="flex flex-col h-full overflow-hidden">
-    <table className="w-full text-xs text-left border-collapse">
-      <thead className="text-[9px] uppercase text-slate-400 bg-slate-50/50 border-b border-slate-100 font-bold tracking-wider">
+    <table className="w-full text-xs text-left border-separate border-spacing-0">
+      <thead className="text-[9px] uppercase text-slate-400 bg-slate-50/50 font-bold tracking-wider sticky top-0">
         <tr>
-          <th className="py-1.5 pl-2 w-[35%]">Metric</th>
-          <th className="py-1.5 text-right w-[15%] px-1 border-l border-slate-100/30">{headers[0] || 'Prv'}</th>
-          <th className="py-1.5 text-right w-[15%] px-1 text-slate-300">%</th>
-          <th className="py-1.5 text-right w-[15%] px-1 border-l border-slate-100/30">{headers[1] || 'Cur'}</th>
-          <th className="py-1.5 text-right w-[15%] px-1 text-blue-400">%</th>
+          <th className="py-1 pl-2 w-[35%] border-b border-slate-100">Metric</th>
+          <th className="py-1 text-right w-[15%] px-1 border-l border-b border-slate-100/50">{headers[0] || 'Prv'}</th>
+          <th className="py-1 text-right w-[15%] px-1 text-slate-300 border-b border-slate-100">%</th>
+          <th className="py-1 text-right w-[15%] px-1 border-l border-b border-slate-100/50">{headers[1] || 'Cur'}</th>
+          <th className="py-1 text-right w-[15%] px-1 text-blue-400 border-b border-slate-100">%</th>
         </tr>
       </thead>
       <tbody className="divide-y divide-slate-50">
@@ -267,23 +271,23 @@ const ComparisonTable = ({ rows, headers, updatedAt }) => (
           };
 
           return (
-            <tr key={idx} className="hover:bg-slate-50/50 transition-colors group">
-              <td className="py-1.5 pl-2 font-medium text-slate-600 flex items-center gap-1.5 truncate">
-                 {isUp ? <ArrowUpRight className="w-3 h-3 text-emerald-500 shrink-0" /> : <ArrowDownRight className="w-3 h-3 text-rose-500 shrink-0" />}
-                 <span className="truncate" title={row.label}>{row.label}</span>
+            <tr key={idx} className="hover:bg-slate-50/80 transition-colors group">
+              <td className="py-1 pl-2 font-medium text-slate-600 flex items-center gap-1 truncate border-r border-slate-50/30">
+                 {isUp ? <ArrowUpRight className="w-2.5 h-2.5 text-emerald-500 shrink-0" /> : <ArrowDownRight className="w-2.5 h-2.5 text-rose-500 shrink-0" />}
+                 <span className="truncate text-[11px]" title={row.label}>{row.label}</span>
               </td>
-              <td className="py-1.5 text-right text-slate-500 font-mono px-1">{format(v1, row.type)}</td>
-              <td className="py-1.5 text-right text-slate-300 text-[9px] px-1">{row.sub1 || '-'}</td>
-              <td className="py-1.5 text-right font-bold text-slate-800 font-mono px-1 border-l border-slate-100/30">{format(v2, row.type)}</td>
-              <td className="py-1.5 text-right text-blue-600 font-bold text-[9px] px-1">{row.sub2 || '-'}</td>
+              <td className="py-1 text-right text-slate-500 font-mono text-[10px] px-1">{format(v1, row.type)}</td>
+              <td className="py-1 text-right text-slate-300 text-[8px] px-1">{row.sub1 || '-'}</td>
+              <td className="py-1 text-right font-bold text-slate-900 font-mono text-[10px] px-1 border-l border-slate-50/50">{format(v2, row.type)}</td>
+              <td className="py-1 text-right text-blue-600 font-bold text-[9px] px-1">{row.sub2 || '-'}</td>
             </tr>
           );
         })}
       </tbody>
     </table>
-    <div className="mt-auto pt-2 border-t border-slate-50 flex items-center justify-end px-1 text-[9px] text-slate-300 gap-1.5">
-       <Clock className="w-2.5 h-2.5" />
-       <span>Refreshed: {updatedAt || 'Ready'}</span>
+    <div className="mt-auto pt-1.5 border-t border-slate-100 flex items-center justify-end px-1 text-[8px] text-slate-500 gap-1 font-semibold uppercase tracking-tighter">
+       <Clock className="w-2 h-2" />
+       <span>Updated: {updatedAt || 'Ready'}</span>
     </div>
   </div>
 );
@@ -295,7 +299,6 @@ export default function App() {
   const [leadData, setLeadData] = useState([]);
   const [invData, setInvData] = useState([]);
   
-  // Track timestamps for individual updates
   const [timestamps, setTimestamps] = useState({
     opportunities: null,
     leads: null,
@@ -331,7 +334,7 @@ export default function App() {
   // --- DATA FETCHING ---
   useEffect(() => {
     const loadData = async () => {
-      const now = new Date().toLocaleTimeString();
+      const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       if (storageMode === 'cloud' && user) {
         try {
           const { data: opps } = await supabase.from('opportunities').select('*').eq('user_id', user.id);
@@ -342,17 +345,16 @@ export default function App() {
           
           const { data: inventory } = await supabase.from('inventory').select('*').eq('user_id', user.id);
           if (inventory) { setInvData(inventory); setTimestamps(prev => ({...prev, inventory: now})); }
-        } catch (e) { console.error("Cloud Fetch Error:", e); }
+        } catch (e) { console.error(e); }
       } else {
         try {
           const savedOpp = localStorage.getItem('dashboard_oppData');
           const savedLead = localStorage.getItem('dashboard_leadData');
           const savedInv = localStorage.getItem('dashboard_invData');
-          
           if (savedOpp) { setOppData(JSON.parse(savedOpp)); setTimestamps(prev => ({...prev, opportunities: now})); }
           if (savedLead) { setLeadData(JSON.parse(savedLead)); setTimestamps(prev => ({...prev, leads: now})); }
           if (savedInv) { setInvData(JSON.parse(savedInv)); setTimestamps(prev => ({...prev, inventory: now})); }
-        } catch (e) { console.error("Local Load Error:", e); }
+        } catch (e) { console.error(e); }
       }
     };
     loadData();
@@ -387,28 +389,22 @@ export default function App() {
     if (maxDate.getTime() === 0) return { prevLabel: 'Prv', currLabel: 'Cur' };
     const currMonth = maxDate; 
     let prevMonth = new Date(currMonth);
-    
     if (timeView === 'CY') prevMonth.setMonth(currMonth.getMonth() - 1);
     else prevMonth.setFullYear(currMonth.getFullYear() - 1);
-
-    const currLabel = currMonth.toLocaleString('default', { month: 'short', year: '2-digit' });
-    const prevLabel = prevMonth.toLocaleString('default', { month: 'short', year: '2-digit' });
-    return { prevLabel, currLabel };
+    return { 
+      currLabel: currMonth.toLocaleString('default', { month: 'short', year: '2-digit' }), 
+      prevLabel: prevMonth.toLocaleString('default', { month: 'short', year: '2-digit' }) 
+    };
   }, [oppData, timeView]);
 
   // --- UPLOAD HANDLER ---
   const handleDataImport = async (newData, type) => {
     setIsUploading(true);
-    const now = new Date().toLocaleTimeString();
-    
-    console.group(`Importing ${type} Data`);
-    console.log(`Received ${newData.length} records`);
-    console.table(newData.slice(0, 3)); // Log first 3 rows to verify columns
-    
+    const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     try {
       if (storageMode === 'cloud' && user) {
          const count = await uploadToSupabase(user.id, type, newData);
-         setSuccessMsg(`Synced ${count} to Supabase SQL`);
+         setSuccessMsg(`Synced ${count} to Supabase`);
          const { data } = await supabase.from(type).select('*').eq('user_id', user.id);
          if (type === 'opportunities') setOppData(data);
          else if (type === 'leads') setLeadData(data);
@@ -420,21 +416,19 @@ export default function App() {
          if (type === 'opportunities') setOppData(merged);
          else if (type === 'leads') setLeadData(merged);
          else if (type === 'inventory') setInvData(merged);
-         setSuccessMsg(`Merged ${newData.length} records locally`);
+         setSuccessMsg(`Imported ${newData.length} records locally`);
       }
       setTimestamps(prev => ({...prev, [type]: now}));
       setTimeout(() => setSuccessMsg(''), 5000);
     } catch (e) {
-      console.error(`Import Error (${type}):`, e);
       alert("Error: " + e.message);
     } finally {
-      console.groupEnd();
       setIsUploading(false);
     }
   };
 
   const clearData = async () => {
-    if(window.confirm("Delete ALL data?")) {
+    if(window.confirm("Erase all data?")) {
        if (storageMode === 'cloud' && user) {
           await supabase.from('opportunities').delete().eq('user_id', user.id);
           await supabase.from('leads').delete().eq('user_id', user.id);
@@ -446,26 +440,30 @@ export default function App() {
        }
        setOppData([]); setLeadData([]); setInvData([]);
        setTimestamps({opportunities: null, leads: null, inventory: null});
-       setSuccessMsg("All data cleared.");
+       setSuccessMsg("System Reset.");
        setTimeout(() => setSuccessMsg(''), 3000);
     }
   };
 
   // --- FILTERING ---
-  const getFilteredData = (data, dataType = 'other') => {
-    const result = data.filter(item => {
+  const getFilteredData = (data, dataType) => {
+    return data.filter(item => {
       const itemLoc = (getVal(item, ['Dealer Code', 'city']) || '').trim();
       const itemCons = (getVal(item, ['Assigned To', 'owner']) || '').trim();
       const itemModel = (getVal(item, ['modellinefe', 'modelline', 'Model Line']) || '').trim();
 
       const matchLoc = filters.location === 'All' || itemLoc === filters.location;
-      const matchCons = filters.consultant === 'All' || itemCons === filters.consultant;
       const matchModel = filters.model === 'All' || itemModel === filters.model;
+      
+      // IMPORTANT: Inventory records don't have Sales Consultants. 
+      // We allow them to show regardless of Consultant filter.
+      let matchCons = true;
+      if (dataType !== 'inventory') {
+        matchCons = filters.consultant === 'All' || itemCons === filters.consultant;
+      }
 
       return matchLoc && matchCons && matchModel;
     });
-    
-    return result;
   };
 
   const filteredOppData = useMemo(() => getFilteredData(oppData, 'opportunities'), [oppData, filters]);
@@ -474,7 +472,7 @@ export default function App() {
   
   const allDataForFilters = useMemo(() => [...oppData, ...leadData, ...invData], [oppData, leadData, invData]);
   const locationOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['Dealer Code'])).filter(Boolean))].sort(), [allDataForFilters]);
-  const consultantOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['Assigned To'])).filter(Boolean))].sort(), [allDataForFilters]);
+  const consultantOptions = useMemo(() => [...new Set(oppData.map(d => getVal(d, ['Assigned To'])).filter(Boolean))].sort(), [oppData]);
   const modelOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['modellinefe', 'Model Line'])).filter(Boolean))].sort(), [allDataForFilters]);
 
   // --- METRICS ---
@@ -488,29 +486,29 @@ export default function App() {
       const testDrives = data.filter(d => ['yes', 'completed', 'done'].includes((getVal(d, ['testdrivecompleted']) || '').toLowerCase())).length;
       const hotLeads = data.filter(d => parseInt(getVal(d, ['opportunityofflinescore']) || '0') > 80 || (getVal(d, ['zqualificationlevel', 'status']) || '').toLowerCase().includes('hot')).length;
       const bookings = data.filter(d => (getVal(d, ['ordernumber']) || '').trim() !== '').length;
-      const retails = data.filter(d => (getVal(d, ['invoicedatev']) || '').trim() !== '').length;
+      const retails = data.filter(d => (getVal(d, ['invoicedatev', 'GST Invoice No.']) || '').trim() !== '').length;
       return { inquiries, testDrives, hotLeads, bookings, retails };
     };
     const c = getMetrics(currData);
     const p = getMetrics(prevData);
     const calcPct = (num, den) => den > 0 ? Math.round((num / den) * 100) + '%' : '0%';
     return [
-      { label: 'Inquiries', v1: p.inquiries, sub1: '100%', v2: c.inquiries, sub2: '100%' },
-      { label: 'Test-drives', v1: p.testDrives, sub1: calcPct(p.testDrives, p.inquiries), v2: c.testDrives, sub2: calcPct(c.testDrives, c.inquiries) },
-      { label: 'Hot Leads', v1: p.hotLeads, sub1: calcPct(p.hotLeads, p.inquiries), v2: c.hotLeads, sub2: calcPct(c.hotLeads, c.inquiries) },
-      { label: 'Booking Conv.', v1: p.bookings, sub1: calcPct(p.bookings, p.inquiries), v2: c.bookings, sub2: calcPct(c.bookings, c.inquiries) },
-      { label: 'Retail Conv.', v1: p.retails, sub1: calcPct(p.retails, p.inquiries), v2: c.retails, sub2: calcPct(c.retails, c.inquiries) },
+      { label: 'Total Inquiries', v1: p.inquiries, sub1: '100%', v2: c.inquiries, sub2: '100%' },
+      { label: 'Test-drives Done', v1: p.testDrives, sub1: calcPct(p.testDrives, p.inquiries), v2: c.testDrives, sub2: calcPct(c.testDrives, c.inquiries) },
+      { label: 'Hot Lead Pool', v1: p.hotLeads, sub1: calcPct(p.hotLeads, p.inquiries), v2: c.hotLeads, sub2: calcPct(c.hotLeads, c.inquiries) },
+      { label: 'Booking Conversion', v1: p.bookings, sub1: calcPct(p.bookings, p.inquiries), v2: c.bookings, sub2: calcPct(c.bookings, c.inquiries) },
+      { label: 'Retail Conversion', v1: p.retails, sub1: calcPct(p.retails, p.inquiries), v2: c.retails, sub2: calcPct(c.retails, c.inquiries) },
     ];
   }, [filteredOppData, timeLabels]);
 
   const inventoryStats = useMemo(() => {
     const total = filteredInvData.length;
     
+    // Improved logic for stock status based on EXPORT Inventory file
     const open = filteredInvData.filter(d => {
       const status = (getVal(d, ['Description of Primary Status', 'Primary Status']) || '').toLowerCase();
-      // Refined logic for your export: Anything NOT sold or booked is open stock.
-      // Include states like "Incoming Invoice Created", "Status Initial"
-      const soldKeywords = ['allotted', 'booked', 'blocked', 'retail', 'deliver', 'delivered', 'invoiced'];
+      // Exclude only sold/customer-allocated states
+      const soldKeywords = ['allotted', 'booked', 'blocked', 'retail', 'delivered', 'allotment'];
       return !soldKeywords.some(k => status.includes(k));
     }).length;
 
@@ -525,11 +523,11 @@ export default function App() {
     }).length;
 
     return [
-      { label: 'Total Inventory', v1: 0, v2: total },
-      { label: 'Open Stock', v1: 0, v2: open, sub2: total ? Math.round((open/total)*100)+'%' : '-' },
-      { label: 'Booked / Allotted', v1: 0, v2: booked, sub2: total ? Math.round((booked/total)*100)+'%' : '-' },
-      { label: 'Wholesale (MTD)', v1: 0, v2: 0 },
-      { label: 'Ageing (>90 Days)', v1: 0, v2: ageing },
+      { label: 'Total Stock', v1: 0, v2: total },
+      { label: 'Open Stock (Inv+Int)', v1: 0, v2: open, sub2: total ? Math.round((open/total)*100)+'%' : '-' },
+      { label: 'Customer Booked', v1: 0, v2: booked, sub2: total ? Math.round((booked/total)*100)+'%' : '-' },
+      { label: 'Wholesale MTD', v1: 0, v2: 0 },
+      { label: 'Ageing >90 Days', v1: 0, v2: ageing },
     ];
   }, [filteredInvData]);
 
@@ -544,67 +542,67 @@ export default function App() {
 
   // --- VIEWS ---
   const DashboardView = () => (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 animate-fade-in">
-       <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-3 flex flex-col hover:shadow-md transition-all group cursor-pointer" onClick={() => { setDetailedMetric('Inquiries'); setViewMode('detailed'); }}>
-          <div className="flex items-center gap-2 mb-2 border-b border-slate-50 pb-1.5">
-            <LayoutDashboard className="w-3.5 h-3.5 text-blue-600" />
-            <h3 className="font-bold text-slate-800 text-xs">Sales Funnel</h3>
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 animate-fade-in">
+       <div className="bg-white rounded-lg card-shadow p-2.5 flex flex-col hover:border-blue-200 border border-transparent transition-all group cursor-pointer" onClick={() => { setDetailedMetric('Inquiries'); setViewMode('detailed'); }}>
+          <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
+            <LayoutDashboard className="w-3 h-3 text-blue-600" />
+            <h3 className="font-bold text-slate-800 text-[11px] uppercase tracking-tight">Sales Funnel</h3>
           </div>
           <ComparisonTable rows={funnelStats} headers={[timeLabels.prevLabel, timeLabels.currLabel]} updatedAt={timestamps.opportunities} />
        </div>
 
-       <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-3 flex flex-col hover:shadow-md transition-all">
-          <div className="flex items-center gap-2 mb-2 border-b border-slate-50 pb-1.5">
-            <Car className="w-3.5 h-3.5 text-indigo-600" />
-            <h3 className="font-bold text-slate-800 text-xs">Inventory Status</h3>
+       <div className="bg-white rounded-lg card-shadow p-2.5 flex flex-col border border-transparent transition-all">
+          <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
+            <Car className="w-3 h-3 text-indigo-600" />
+            <h3 className="font-bold text-slate-800 text-[11px] uppercase tracking-tight">Inventory Stock</h3>
           </div>
-          <ComparisonTable rows={inventoryStats} headers={['', 'Total']} updatedAt={timestamps.inventory} />
+          <ComparisonTable rows={inventoryStats} headers={['', 'Stock']} updatedAt={timestamps.inventory} />
        </div>
 
-       <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-3 flex flex-col hover:shadow-md transition-all">
-          <div className="flex items-center gap-2 mb-2 border-b border-slate-50 pb-1.5">
-            <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
-            <h3 className="font-bold text-slate-800 text-xs">Top Lead Sources</h3>
+       <div className="bg-white rounded-lg card-shadow p-2.5 flex flex-col border border-transparent transition-all">
+          <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
+            <TrendingUp className="w-3 h-3 text-emerald-600" />
+            <h3 className="font-bold text-slate-800 text-[11px] uppercase tracking-tight">Top Channels</h3>
           </div>
           <ComparisonTable rows={sourceStats.length ? sourceStats : [{label: 'No Data', v1:0, v2:0}]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} updatedAt={timestamps.leads} />
        </div>
 
-       <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-3 flex flex-col hover:shadow-md transition-all">
-          <div className="flex items-center gap-2 mb-2 border-b border-slate-50 pb-1.5">
-            <FileSpreadsheet className="w-3.5 h-3.5 text-purple-600" />
-            <h3 className="font-bold text-slate-800 text-xs">Cross-Sell Performance</h3>
+       <div className="bg-white rounded-lg card-shadow p-2.5 flex flex-col border border-transparent transition-all">
+          <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
+            <FileSpreadsheet className="w-3 h-3 text-purple-600" />
+            <h3 className="font-bold text-slate-800 text-[11px] uppercase tracking-tight">Value Added Serv.</h3>
           </div>
           <ComparisonTable rows={[
-               {label: 'Car Finance', v1: 0, v2: 0},
-               {label: 'Insurance', v1: 0, v2: 0},
-               {label: 'Exchange', v1: 0, v2: 0},
+               {label: 'Finance Pen.', v1: 0, v2: 0},
+               {label: 'Insurance Pen.', v1: 0, v2: 0},
+               {label: 'Exchange Pen.', v1: 0, v2: 0},
                {label: 'Accessories', v1: 0, v2: 0, type: 'currency'}
            ]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} />
        </div>
 
-       <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-3 flex flex-col hover:shadow-md transition-all">
-          <div className="flex items-center gap-2 mb-2 border-b border-slate-50 pb-1.5">
-            <Users className="w-3.5 h-3.5 text-orange-600" />
-            <h3 className="font-bold text-slate-800 text-xs">Sales Operations</h3>
+       <div className="bg-white rounded-lg card-shadow p-2.5 flex flex-col border border-transparent transition-all">
+          <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
+            <Users className="w-3 h-3 text-orange-600" />
+            <h3 className="font-bold text-slate-800 text-[11px] uppercase tracking-tight">Sales Activity</h3>
           </div>
           <ComparisonTable rows={[
-               {label: 'Bookings (M)', v1: funnelStats[3]?.v1 || 0, v2: funnelStats[3]?.v2 || 0},
-               {label: 'Retails (M)', v1: funnelStats[4]?.v1 || 0, v2: funnelStats[4]?.v2 || 0},
-               {label: 'OEM Whl.', v1: 0, v2: 0},
-               {label: 'POC Sales', v1: 0, v2: 0}
+               {label: 'Monthly Bookings', v1: funnelStats[3]?.v1 || 0, v2: funnelStats[3]?.v2 || 0},
+               {label: 'Monthly Retails', v1: funnelStats[4]?.v1 || 0, v2: funnelStats[4]?.v2 || 0},
+               {label: 'Dealer Stock Whl.', v1: 0, v2: 0},
+               {label: 'Corporate Sales', v1: 0, v2: 0}
            ]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} updatedAt={timestamps.opportunities} />
        </div>
 
-       <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-3 flex flex-col hover:shadow-md transition-all">
-          <div className="flex items-center gap-2 mb-2 border-b border-slate-50 pb-1.5">
-            <DollarSign className="w-3.5 h-3.5 text-rose-600" />
-            <h3 className="font-bold text-slate-800 text-xs">Margin & Efficiency</h3>
+       <div className="bg-white rounded-lg card-shadow p-2.5 flex flex-col border border-transparent transition-all">
+          <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
+            <DollarSign className="w-3 h-3 text-rose-600" />
+            <h3 className="font-bold text-slate-800 text-[11px] uppercase tracking-tight">Profitability</h3>
           </div>
           <ComparisonTable rows={[
-               {label: 'New Car Margin', v1: 0, v2: 0, type: 'currency'},
-               {label: 'Used Car Margin', v1: 0, v2: 0, type: 'currency'},
-               {label: 'Margin / Unit', v1: 0, v2: 0},
-               {label: 'SC Productivity', v1: 0, v2: 0},
+               {label: 'Avg. Margin/Car', v1: 0, v2: 0, type: 'currency'},
+               {label: 'Total Margin', v1: 0, v2: 0, type: 'currency'},
+               {label: 'Service Revenue', v1: 0, v2: 0, type: 'currency'},
+               {label: 'Consultant Prod.', v1: 0, v2: 0},
            ]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} />
        </div>
     </div>
@@ -614,12 +612,12 @@ export default function App() {
     const consultantMix = useMemo(() => {
         const counts = {};
         filteredOppData.forEach(d => { const c = getVal(d, ['Assigned To', 'owner']); if(c) counts[c] = (counts[c] || 0) + 1; });
-        return Object.entries(counts).map(([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value);
+        return Object.entries(counts).map(([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value).slice(0, 10);
     }, [filteredOppData]);
 
     const trendData = useMemo(() => {
       const months = {};
-      oppData.slice(-100).forEach(d => {
+      oppData.slice(-200).forEach(d => {
         const m = getMonthStr(getVal(d, ['createdon', 'createddate']));
         months[m] = (months[m] || 0) + 1;
       });
@@ -627,57 +625,57 @@ export default function App() {
     }, [oppData]);
 
     return (
-      <div className="space-y-4 animate-fade-in">
-        <div className="bg-white p-3 rounded-lg shadow-sm border border-slate-200 flex items-center justify-between">
+      <div className="space-y-3 animate-fade-in">
+        <div className="bg-white p-2.5 rounded-lg shadow-sm border border-slate-200 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <button onClick={() => setViewMode('dashboard')} className="p-1 hover:bg-slate-100 rounded transition-colors">
                <ArrowDownRight className="w-4 h-4 text-slate-500 rotate-135" />
             </button>
-            <h2 className="text-base font-bold text-slate-900">{detailedMetric} Analytics</h2>
+            <h2 className="text-sm font-bold text-slate-900">{detailedMetric} Deep Analytics</h2>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
           <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
-             <h3 className="font-bold text-slate-800 mb-4 text-[11px] uppercase tracking-wider">Consultant Mix</h3>
-             <div className="h-60">
+             <h3 className="font-bold text-slate-800 mb-3 text-[10px] uppercase tracking-wider">Consultant Performance (Top 10)</h3>
+             <div className="h-56">
                <ResponsiveContainer width="100%" height="100%">
                  <BarChart data={consultantMix} layout="vertical">
                    <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
                    <XAxis type="number" hide />
-                   <YAxis dataKey="name" type="category" width={90} tick={{fontSize: 9}} axisLine={false} tickLine={false} />
-                   <RechartsTooltip cursor={{fill: '#f8fafc'}} />
-                   <Bar dataKey="value" fill="#3b82f6" radius={[0, 4, 4, 0]} barSize={16} />
+                   <YAxis dataKey="name" type="category" width={80} tick={{fontSize: 8, fontWeight: 600}} axisLine={false} tickLine={false} />
+                   <RechartsTooltip cursor={{fill: '#f8fafc'}} contentStyle={{fontSize: '10px', borderRadius: '8px'}} />
+                   <Bar dataKey="value" fill="#2563eb" radius={[0, 4, 4, 0]} barSize={12} />
                  </BarChart>
                </ResponsiveContainer>
              </div>
           </div>
 
           <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
-             <h3 className="font-bold text-slate-800 mb-4 text-[11px] uppercase tracking-wider">Monthly Inquiry Trend</h3>
-             <div className="h-60">
+             <h3 className="font-bold text-slate-800 mb-3 text-[10px] uppercase tracking-wider">Volume Trend</h3>
+             <div className="h-56">
                <ResponsiveContainer width="100%" height="100%">
                  <LineChart data={trendData}>
                    <CartesianGrid strokeDasharray="3 3" />
-                   <XAxis dataKey="name" tick={{fontSize: 9}} />
-                   <YAxis tick={{fontSize: 9}} />
-                   <RechartsTooltip />
-                   <Line type="monotone" dataKey="value" stroke="#3b82f6" strokeWidth={2} dot={{ r: 4 }} />
+                   <XAxis dataKey="name" tick={{fontSize: 8}} />
+                   <YAxis tick={{fontSize: 8}} />
+                   <RechartsTooltip contentStyle={{fontSize: '10px'}} />
+                   <Line type="monotone" dataKey="value" stroke="#2563eb" strokeWidth={2} dot={{ r: 3 }} />
                  </LineChart>
                </ResponsiveContainer>
              </div>
           </div>
           
           <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200 lg:col-span-2">
-             <h3 className="font-bold text-slate-800 mb-4 text-[11px] uppercase tracking-wider">Lead Source Distribution</h3>
-             <div className="h-60 flex justify-center">
+             <h3 className="font-bold text-slate-800 mb-3 text-[10px] uppercase tracking-wider text-center">Lead Source Breakdown</h3>
+             <div className="h-64 flex justify-center">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
-                    <Pie data={sourceStats} innerRadius={50} outerRadius={75} paddingAngle={5} dataKey="v2" nameKey="label">
+                    <Pie data={sourceStats} innerRadius={45} outerRadius={70} paddingAngle={4} dataKey="v2" nameKey="label">
                       {sourceStats.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
                     </Pie>
                     <RechartsTooltip />
-                    <Legend iconSize={8} wrapperStyle={{fontSize: '10px'}} />
+                    <Legend iconSize={8} wrapperStyle={{fontSize: '9px', fontWeight: 600}} />
                   </PieChart>
                 </ResponsiveContainer>
              </div>
@@ -690,18 +688,18 @@ export default function App() {
   const TableView = () => (
     <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
        <div className="overflow-x-auto">
-         <table className="w-full text-left text-xs text-slate-600">
+         <table className="w-full text-left text-[11px] text-slate-600">
            <thead className="bg-slate-50/50 text-slate-400 font-bold border-b border-slate-200 uppercase tracking-tighter">
-             <tr><th className="p-2.5">Reference ID</th><th className="p-2.5">Customer</th><th className="p-2.5">Model</th><th className="p-2.5">Date</th><th className="p-2.5">Current Status</th></tr>
+             <tr><th className="p-2">ID</th><th className="p-2">Customer</th><th className="p-2">Model</th><th className="p-2">Date</th><th className="p-2">Status</th></tr>
            </thead>
            <tbody className="divide-y divide-slate-100">
              {(filteredOppData.length > 0 ? filteredOppData : filteredLeadData).slice(0, 50).map((row, idx) => (
                <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                 <td className="p-2.5 font-mono text-slate-400 text-[10px]">{getVal(row, ['id', 'leadid', 'vin'])}</td>
-                 <td className="p-2.5 font-medium text-slate-800">{getVal(row, ['customer', 'Customer Name', 'name']) || 'Anonymous'}</td>
-                 <td className="p-2.5">{getVal(row, ['modellinefe', 'modelline', 'Model Line']) || 'N/A'}</td>
-                 <td className="p-2.5 text-[10px]">{getVal(row, ['createdon', 'createddate', 'GRN Date'])}</td>
-                 <td className="p-2.5"><span className="px-1.5 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-[9px] font-bold">{getVal(row, ['status', 'qualificationlevel', 'Description of Primary Status']) || 'Active'}</span></td>
+                 <td className="p-2 font-mono text-slate-400 text-[9px]">{getVal(row, ['id', 'leadid', 'vin'])}</td>
+                 <td className="p-2 font-semibold text-slate-800">{getVal(row, ['customer', 'name']) || 'Anonymous'}</td>
+                 <td className="p-2">{getVal(row, ['modelline', 'Model Line']) || 'N/A'}</td>
+                 <td className="p-2">{getVal(row, ['createdon', 'createddate'])}</td>
+                 <td className="p-2"><span className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-100 text-[8px] font-bold">{getVal(row, ['status', 'qualificationlevel', 'Description of Primary Status']) || 'Active'}</span></td>
                </tr>
              ))}
            </tbody>
@@ -711,62 +709,65 @@ export default function App() {
   );
 
   return (
-    <div className="min-h-screen font-sans pb-10">
+    <div className="min-h-screen font-sans pb-8">
        <GlobalStyles />
        <ImportWizard isOpen={showImport} onClose={() => setShowImport(false)} onDataImported={handleDataImport} isUploading={isUploading} mode={storageMode} />
 
-       <header className="bg-white border-b border-slate-200 sticky top-0 z-40">
-         <div className="max-w-[1400px] mx-auto px-4 h-12 flex items-center justify-between">
+       <header className="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-sm">
+         <div className="max-w-[1400px] mx-auto px-3 h-10 flex items-center justify-between">
            <div className="flex items-center gap-2">
-             <div className="w-7 h-7 bg-blue-600 rounded flex items-center justify-center text-white"><Car className="w-4 h-4" /></div>
+             <div className="w-6 h-6 bg-blue-600 rounded flex items-center justify-center text-white"><Car className="w-3.5 h-3.5" /></div>
              <div>
-                <h1 className="text-xs font-bold text-slate-900 leading-none">Sales Intelligence</h1>
-                <div className="text-[8px] text-slate-400 uppercase font-bold tracking-tight mt-0.5">{timeLabels.currLabel} View</div>
+                <h1 className="text-[11px] font-black text-slate-900 leading-none uppercase tracking-tighter italic">Sales IQ</h1>
+                <div className="text-[7px] text-slate-400 uppercase font-bold tracking-widest leading-none mt-0.5">{timeLabels.currLabel} Snapshot</div>
              </div>
            </div>
 
-           <div className="flex items-center gap-3">
-              <div className="flex bg-slate-100 p-1 rounded-md border border-slate-200">
-                <button onClick={() => setViewMode('dashboard')} className={`px-2.5 py-1 rounded text-[10px] font-bold ${viewMode === 'dashboard' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>Dashboard</button>
-                <button onClick={() => setViewMode('detailed')} className={`px-2.5 py-1 rounded text-[10px] font-bold ${viewMode === 'detailed' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>Analytics</button>
-                <button onClick={() => setViewMode('table')} className={`px-2.5 py-1 rounded text-[10px] font-bold ${viewMode === 'table' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>Records</button>
+           <div className="flex items-center gap-2">
+              <div className="flex bg-slate-100 p-0.5 rounded border border-slate-200">
+                <button onClick={() => setViewMode('dashboard')} className={`px-2 py-0.5 rounded text-[9px] font-extrabold ${viewMode === 'dashboard' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>DASHBOARD</button>
+                <button onClick={() => setViewMode('detailed')} className={`px-2 py-0.5 rounded text-[9px] font-extrabold ${viewMode === 'detailed' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>ANALYTICS</button>
+                <button onClick={() => setViewMode('table')} className={`px-2 py-0.5 rounded text-[9px] font-extrabold ${viewMode === 'table' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>RECORDS</button>
               </div>
-              <button onClick={() => setShowImport(true)} className="bg-slate-900 text-white px-3 py-1 rounded text-[10px] font-bold hover:bg-slate-800 flex items-center gap-1.5"><Upload className="w-3 h-3" /> Import</button>
-              <button onClick={clearData} className="p-1 text-rose-400 hover:bg-rose-50 rounded transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+              <button onClick={() => setShowImport(true)} className="bg-slate-900 text-white px-2.5 py-0.5 rounded text-[9px] font-bold hover:bg-slate-800 flex items-center gap-1"><Upload className="w-2.5 h-2.5" /> IMPORT</button>
+              <button onClick={clearData} className="p-0.5 text-rose-400 hover:bg-rose-50 rounded transition-colors"><Trash2 className="w-3 h-3" /></button>
            </div>
          </div>
          
-         <div className="border-t border-slate-100 bg-white px-4 py-1.5 flex items-center gap-3 overflow-x-auto">
+         <div className="border-t border-slate-100 bg-white px-3 py-1 flex items-center gap-2.5 overflow-x-auto no-scrollbar">
             <div className="flex items-center gap-2">
-              <span className="text-[9px] font-bold text-slate-400 uppercase flex items-center gap-1 min-w-max"><Filter className="w-2.5 h-2.5" /> Filters:</span>
-              <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-md px-1.5 py-0.5">
+              <span className="text-[8px] font-black text-slate-400 uppercase flex items-center gap-1 min-w-max"><Filter className="w-2.5 h-2.5" /> FILTERS</span>
+              
+              <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 h-6">
                 <UserCheck className="w-2.5 h-2.5 text-slate-400" />
-                <select className="bg-transparent text-[10px] font-bold text-slate-700 outline-none min-w-[90px]" value={filters.consultant} onChange={e => setFilters({...filters, consultant: e.target.value})}>
-                   <option value="All">Consultant</option>
+                <select className="bg-transparent text-[9px] font-bold text-slate-700 outline-none min-w-[80px]" value={filters.consultant} onChange={e => setFilters({...filters, consultant: e.target.value})}>
+                   <option value="All">All SCs</option>
                    {consultantOptions.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
-              <select className="bg-slate-50 border border-slate-200 rounded-md px-2 py-0.5 text-[10px] font-bold text-slate-700 outline-none" value={filters.model} onChange={e => setFilters({...filters, model: e.target.value})}>
+
+              <select className="bg-slate-50 border border-slate-200 rounded px-2 py-0.5 text-[9px] font-bold text-slate-700 outline-none h-6" value={filters.model} onChange={e => setFilters({...filters, model: e.target.value})}>
                  <option value="All">All Models</option>
                  {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
-              <select className="bg-slate-50 border border-slate-200 rounded-md px-2 py-0.5 text-[10px] font-bold text-slate-700 outline-none" value={filters.location} onChange={e => setFilters({...filters, location: e.target.value})}>
-                 <option value="All">All Locations</option>
+
+              <select className="bg-slate-50 border border-slate-200 rounded px-2 py-0.5 text-[9px] font-bold text-slate-700 outline-none h-6" value={filters.location} onChange={e => setFilters({...filters, location: e.target.value})}>
+                 <option value="All">All Branches</option>
                  {locationOptions.map(l => <option key={l} value={l}>{l}</option>)}
               </select>
             </div>
             
-            <div className="ml-auto flex items-center gap-2 min-w-max">
+            <div className="ml-auto flex items-center gap-1.5 min-w-max">
                <div className="comparison-toggle" onClick={() => setTimeView(timeView === 'CY' ? 'LY' : 'CY')}>
-                  <div className={`comparison-toggle-item ${timeView === 'CY' ? 'comparison-toggle-active' : 'text-slate-400'}`}>CY</div>
-                  <div className={`comparison-toggle-item ${timeView === 'LY' ? 'comparison-toggle-active' : 'text-slate-400'}`}>LY</div>
+                  <div className={`comparison-toggle-item ${timeView === 'CY' ? 'comparison-toggle-active' : 'text-slate-500'}`}>CY (MoM)</div>
+                  <div className={`comparison-toggle-item ${timeView === 'LY' ? 'comparison-toggle-active' : 'text-slate-500'}`}>LY (YoY)</div>
                </div>
             </div>
          </div>
        </header>
 
-       <main className="max-w-[1400px] mx-auto px-4 py-4">
-         {successMsg && <div className="bg-emerald-50 border border-emerald-100 rounded px-3 py-1.5 text-[9px] font-bold text-emerald-700 mb-4 animate-fade-in flex items-center gap-2"><CheckCircle className="w-3 h-3" /> {successMsg}</div>}
+       <main className="max-w-[1400px] mx-auto px-3 py-3">
+         {successMsg && <div className="bg-emerald-600 text-white rounded shadow-sm px-3 py-1.5 text-[10px] font-black mb-3 animate-fade-in flex items-center gap-2 uppercase tracking-wide"><CheckCircle className="w-3 h-3" /> {successMsg}</div>}
          {viewMode === 'dashboard' && <DashboardView />}
          {viewMode === 'detailed' && <DetailedView />}
          {viewMode === 'table' && <TableView />}
