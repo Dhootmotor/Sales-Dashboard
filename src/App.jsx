@@ -199,22 +199,22 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) =>
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-fade-in border border-slate-200">
         <div className="bg-slate-900 px-5 py-3 flex justify-between items-center">
           <h2 className="text-white font-bold text-sm flex items-center gap-2"><Upload className="w-4 h-4 text-blue-400" /> Import Master Data</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
+          <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors p-1 hover:bg-slate-800 rounded"><X className="w-5 h-5" /></button>
         </div>
         <div className="p-5 space-y-4">
-          <div className="border-2 border-dashed border-slate-200 rounded-xl p-8 hover:border-blue-500 bg-slate-50 relative flex flex-col items-center justify-center text-center cursor-pointer">
-            <FileSpreadsheet className="w-8 h-8 text-blue-600 mb-2" /> 
+          <div className="border-2 border-dashed border-slate-200 rounded-xl p-8 hover:border-blue-500 bg-slate-50 relative flex flex-col items-center justify-center text-center cursor-pointer group">
+            <FileSpreadsheet className="w-8 h-8 text-blue-600 mb-2 group-hover:scale-110 transition-transform" /> 
             <div className="text-slate-900 font-bold text-sm">{file ? file.name : "Select CSV to Upload"}</div>
             <input type="file" accept=".csv" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onChange={handleFileChange} />
           </div>
           <div className="flex items-center gap-2 bg-slate-50 p-2 rounded-lg border border-slate-100">
              <input type="checkbox" id="overwrite" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} className="w-4 h-4 rounded text-blue-600" />
-             <label htmlFor="overwrite" className="text-[11px] font-bold text-slate-600 cursor-pointer">Overwrite Current Session Data</label>
+             <label htmlFor="overwrite" className="text-[11px] font-bold text-slate-600 cursor-pointer">Overwrite Existing Category Data</label>
           </div>
         </div>
         <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 flex justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-200 rounded-lg">Cancel</button>
-          <button onClick={processFiles} disabled={isUploading || !file} className={`px-5 py-1.5 text-[11px] font-bold text-white rounded-lg transition-all ${isUploading || !file ? 'bg-slate-400' : 'bg-blue-600 hover:bg-blue-700'}`}>
+          <button onClick={onClose} className="px-4 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-200 rounded-lg transition-colors">Cancel</button>
+          <button onClick={processFiles} disabled={isUploading || !file} className={`px-5 py-1.5 text-[11px] font-bold text-white rounded-lg transition-all ${isUploading || !file ? 'bg-slate-400' : 'bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-500/20'}`}>
             {isUploading ? 'Importing...' : 'Sync System'}
           </button>
         </div>
@@ -255,7 +255,7 @@ const ComparisonTable = ({ rows, headers, updatedAt }) => (
       </tbody>
     </table>
     <div className="mt-auto pt-1 border-t border-slate-100 flex items-center justify-end px-1 text-[8px] text-slate-800 font-extrabold uppercase italic tracking-tighter">
-       <Clock className="w-2 h-2 mr-1" /> Updated: {updatedAt || 'Ready'}
+       <Clock className="w-2 h-2 mr-1" /> Refreshed: {updatedAt || 'Ready'}
     </div>
   </div>
 );
@@ -421,31 +421,43 @@ export default function App() {
   }, [filteredOppData, timeLabels]);
 
   const inventoryStats = useMemo(() => {
-    const total = filteredInvData.length;
     const bookingModelTexts = bookingData.map(b => getVal(b, ['Model Text 1']).toLowerCase());
-    
     const checkIsBooked = (d) => {
       const salesOrder = getVal(d, ['Sales Order Number']).trim();
       const modelCode = getVal(d, ['Model Sales Code']).toLowerCase().trim();
-      // 1. If has explicit order number
       if (salesOrder) return true;
-      // 2. If model code exists in any booking text (User Logic)
       if (modelCode && bookingModelTexts.some(txt => txt.includes(modelCode))) return true;
       return false;
     };
 
-    const bookedCount = filteredInvData.filter(checkIsBooked).length;
-    const openCount = total - bookedCount;
-    const currentMonthLabel = timeLabels.currLabel;
-    const openingStock = filteredInvData.filter(d => { const m = getMonthStr(getVal(d, ['GRN Date'])); return m !== currentMonthLabel && !checkIsBooked(d); }).length;
-    const ageing90 = filteredInvData.filter(d => parseInt(getVal(d, ['Ageing Days']) || '0') > 90).length;
+    const getStatsForMonth = (monthLabel) => {
+      const dataForMonth = filteredInvData.filter(d => {
+        const grnMonth = getMonthStr(getVal(d, ['GRN Date']));
+        // For Curr month, we include all data. For Prev month, we only include GRNs up to then.
+        if (monthLabel === timeLabels.currLabel) return true;
+        return grnMonth === monthLabel || getDateObj(getVal(d, ['GRN Date'])) < getDateObj(monthLabel);
+      });
+      
+      const total = dataForMonth.length;
+      const bookedCount = dataForMonth.filter(checkIsBooked).length;
+      const openCount = total - bookedCount;
+      const openingStock = dataForMonth.filter(d => getMonthStr(getVal(d, ['GRN Date'])) !== monthLabel && !checkIsBooked(d)).length;
+      const ageing90 = dataForMonth.filter(d => parseInt(getVal(d, ['Ageing Days']) || '0') > 90).length;
+
+      return { total, openCount, bookedCount, openingStock, ageing90 };
+    };
+
+    const c = getStatsForMonth(timeLabels.currLabel);
+    const p = getStatsForMonth(timeLabels.prevLabel);
+
+    const calcPct = (num, den) => den > 0 ? Math.round((num / den) * 100) + '%' : '0%';
 
     return [
-      { label: 'Total Inventory', v1: 0, v2: total },
-      { label: 'Opening Stock', v1: 0, v2: openingStock, sub2: total ? Math.round((openingStock/total)*100)+'%' : '-' },
-      { label: 'Available (Open)', v1: 0, v2: openCount, sub2: total ? Math.round((openCount/total)*100)+'%' : '-' },
-      { label: 'Customer Booked', v1: 0, v2: bookedCount, sub2: total ? Math.round((bookedCount/total)*100)+'%' : '-' },
-      { label: 'Ageing (>90 Days)', v1: 0, v2: ageing90 },
+      { label: 'Total Inventory', v1: p.total, v2: c.total },
+      { label: 'Opening Stock', v1: p.openingStock, sub1: calcPct(p.openingStock, p.total), v2: c.openingStock, sub2: calcPct(c.openingStock, c.total) },
+      { label: 'Available (Open)', v1: p.openCount, sub1: calcPct(p.openCount, p.total), v2: c.openCount, sub2: calcPct(c.openCount, c.total) },
+      { label: 'Customer Booked', v1: p.bookedCount, sub1: calcPct(p.bookedCount, p.total), v2: c.bookedCount, sub2: calcPct(c.bookedCount, c.total) },
+      { label: 'Ageing (>90 Days)', v1: p.ageing90, v2: c.ageing90 },
     ];
   }, [filteredInvData, bookingData, timeLabels]);
 
@@ -459,13 +471,13 @@ export default function App() {
         { label: 'Finance Pen.', v1: 0, v2: financed, sub2: retails ? Math.round((financed/retails)*100)+'%' : '0%' },
         { label: 'Insurance Pen.', v1: 0, v2: insured, sub2: retails ? Math.round((insured/retails)*100)+'%' : '0%' },
         { label: 'Exchange Pen.', v1: 0, v2: 0 },
-        { label: 'Accessories', v1: 0, v2: 0, type: 'currency' }
+        { label: 'VAS Penetration', v1: 0, v2: 0 }
       ],
       efficiency: [
-        { label: 'Avg. Retail/SC', v1: 0, v2: (retails / scCount).toFixed(1) },
+        { label: 'Retails / SC', v1: 0, v2: (retails / scCount).toFixed(1) },
         { label: 'Total Retails', v1: 0, v2: retails },
-        { label: 'Revenue Pool', v1: 0, v2: 0, type: 'currency' },
-        { label: 'Margin Pool', v1: 0, v2: 0, type: 'currency' }
+        { label: 'Margin / Unit', v1: 0, v2: 0, type: 'currency' },
+        { label: 'System Margin', v1: 0, v2: 0, type: 'currency' }
       ]
     };
   }, [filteredBks, filteredOppData]);
@@ -486,7 +498,7 @@ export default function App() {
        </div>
        <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
           <div className="flex items-center gap-1.5 mb-1 border-b border-slate-50 pb-0.5"><Car className="w-3 h-3 text-indigo-600" /><h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Stock & Booked</h3></div>
-          <ComparisonTable rows={inventoryStats} headers={['', 'Stock']} updatedAt={timestamps.inventory} />
+          <ComparisonTable rows={inventoryStats} headers={[timeLabels.prevLabel, timeLabels.currLabel]} updatedAt={timestamps.inventory} />
        </div>
        <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
           <div className="flex items-center gap-1.5 mb-1 border-b border-slate-50 pb-0.5"><TrendingUp className="w-3 h-3 text-emerald-600" /><h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Top Channels</h3></div>
@@ -502,7 +514,7 @@ export default function App() {
                {label: 'Monthly Bookings', v1: funnelStats[3]?.v1 || 0, v2: funnelStats[3]?.v2 || 0},
                {label: 'Monthly Retails', v1: funnelStats[4]?.v1 || 0, v2: funnelStats[4]?.v2 || 0},
                {label: 'Wholesale MTD', v1: 0, v2: 0},
-               {label: 'Corporate Pen.', v1: 0, v2: 0}
+               {label: 'Exchange In', v1: 0, v2: 0}
            ]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} updatedAt={timestamps.opportunities} />
        </div>
        <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
@@ -554,8 +566,8 @@ export default function App() {
        <GlobalStyles />
        <ImportWizard isOpen={showImport} onClose={() => setShowImport(false)} onDataImported={handleDataImport} isUploading={isUploading} mode={storageMode} />
 
-       <header className="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-sm">
-         <div className="max-w-[1400px] mx-auto px-3 h-10 flex items-center justify-between gap-3 overflow-x-auto no-scrollbar">
+       <header className="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-sm overflow-hidden">
+         <div className="max-w-[1400px] mx-auto px-3 h-10 flex items-center justify-between gap-2 no-scrollbar">
            
            <div className="flex items-center gap-1.5 shrink-0">
              <div className="w-6 h-6 bg-blue-600 rounded flex items-center justify-center text-white"><Car className="w-3.5 h-3.5" /></div>
@@ -567,8 +579,8 @@ export default function App() {
              </div>
            </div>
 
-           <div className="flex items-center gap-1.5 shrink-0 px-2 border-l border-slate-200">
-              <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded px-1 py-0.5 h-6">
+           <div className="flex items-center gap-1.5 shrink-0 px-1 border-l border-slate-100">
+              <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 h-6">
                 <UserCheck className="w-2.5 h-2.5 text-slate-400" />
                 <select className="bg-transparent text-[8px] font-bold text-slate-700 outline-none min-w-[70px]" value={filters.consultant} onChange={e => setFilters({...filters, consultant: e.target.value})}>
                    <option value="All">All SCs</option>
@@ -586,7 +598,7 @@ export default function App() {
            </div>
 
            <div className="flex items-center gap-2 shrink-0 ml-auto">
-              <div className="comparison-toggle" onClick={() => setTimeView(timeView === 'CY' ? 'LY' : 'CY')}>
+              <div className="comparison-toggle shrink-0" onClick={() => setTimeView(timeView === 'CY' ? 'LY' : 'CY')}>
                   <div className={`comparison-toggle-item ${timeView === 'CY' ? 'comparison-toggle-active' : 'text-slate-500'}`}>CY</div>
                   <div className={`comparison-toggle-item ${timeView === 'LY' ? 'comparison-toggle-active' : 'text-slate-500'}`}>LY</div>
               </div>
