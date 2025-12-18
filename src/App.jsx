@@ -42,7 +42,7 @@ try {
 // --- STYLES ---
 const GlobalStyles = () => (
   <style>{`
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
     
     body {
       font-family: 'Inter', sans-serif;
@@ -186,6 +186,8 @@ const mergeLocalData = (currentData, newData, type) => {
 // --- COMPONENTS ---
 const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) => {
   const [file, setFile] = useState(null);
+  const [overwrite, setOverwrite] = useState(false);
+  
   const handleFileChange = (e) => { if (e.target.files[0]) setFile(e.target.files[0]); };
 
   const processFiles = async () => {
@@ -204,7 +206,7 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) =>
       else if (headerString.includes('lead id') || headerString.includes('qualification level')) type = 'leads';
       else if (headerString.includes('vehicle identification number') || headerString.includes('vin')) type = 'inventory'; 
 
-      await onDataImported(rows, type);
+      await onDataImported(rows, type, overwrite);
       setFile(null);
       onClose();
     } catch (error) {
@@ -227,13 +229,18 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) =>
         
         <div className="p-5 space-y-4">
           <div className="p-3 rounded-lg text-xs bg-blue-50 border border-blue-100 text-blue-700">
-             {mode === 'cloud' ? 'Data will sync with Supabase SQL' : 'Data stored locally in your browser'}
+             {mode === 'cloud' ? 'Syncing to Supabase SQL' : 'Saving to Local Storage'}
           </div>
 
           <div className="border-2 border-dashed border-slate-200 rounded-xl p-8 hover:border-blue-500 transition-all bg-slate-50 relative group flex flex-col items-center justify-center text-center cursor-pointer">
                 <FileSpreadsheet className="w-8 h-8 text-blue-600 mb-2" /> 
                 <div className="text-slate-900 font-bold text-sm">{file ? file.name : "Select CSV to Upload"}</div>
                 <input type="file" accept=".csv" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onChange={handleFileChange} />
+          </div>
+
+          <div className="flex items-center gap-2 bg-slate-50 p-2 rounded-lg border border-slate-100">
+             <input type="checkbox" id="overwrite" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500" />
+             <label htmlFor="overwrite" className="text-[11px] font-bold text-slate-600 cursor-pointer">Overwrite Existing Data (Start Fresh)</label>
           </div>
         </div>
 
@@ -285,9 +292,9 @@ const ComparisonTable = ({ rows, headers, updatedAt }) => (
         })}
       </tbody>
     </table>
-    <div className="mt-auto pt-1.5 border-t border-slate-100 flex items-center justify-end px-1 text-[8px] text-slate-500 gap-1 font-semibold uppercase tracking-tighter">
+    <div className="mt-auto pt-1.5 border-t border-slate-100 flex items-center justify-end px-1 text-[8px] text-slate-700 gap-1 font-bold uppercase tracking-tighter">
        <Clock className="w-2 h-2" />
-       <span>Updated: {updatedAt || 'Ready'}</span>
+       <span>Refreshed: {updatedAt || 'Ready'}</span>
     </div>
   </div>
 );
@@ -398,11 +405,14 @@ export default function App() {
   }, [oppData, timeView]);
 
   // --- UPLOAD HANDLER ---
-  const handleDataImport = async (newData, type) => {
+  const handleDataImport = async (newData, type, overwrite) => {
     setIsUploading(true);
     const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     try {
       if (storageMode === 'cloud' && user) {
+         if (overwrite) {
+            await supabase.from(type).delete().eq('user_id', user.id);
+         }
          const count = await uploadToSupabase(user.id, type, newData);
          setSuccessMsg(`Synced ${count} to Supabase`);
          const { data } = await supabase.from(type).select('*').eq('user_id', user.id);
@@ -410,13 +420,16 @@ export default function App() {
          else if (type === 'leads') setLeadData(data);
          else if (type === 'inventory') setInvData(data);
       } else {
-         const current = type === 'opportunities' ? oppData : (type === 'leads' ? leadData : invData);
+         let current = [];
+         if (!overwrite) {
+           current = type === 'opportunities' ? oppData : (type === 'leads' ? leadData : invData);
+         }
          const merged = mergeLocalData(current, newData, type);
          localStorage.setItem(`dashboard_${type}Data`, JSON.stringify(merged));
          if (type === 'opportunities') setOppData(merged);
          else if (type === 'leads') setLeadData(merged);
          else if (type === 'inventory') setInvData(merged);
-         setSuccessMsg(`Imported ${newData.length} records locally`);
+         setSuccessMsg(`${overwrite ? 'Overwritten' : 'Merged'} ${newData.length} records locally`);
       }
       setTimestamps(prev => ({...prev, [type]: now}));
       setTimeout(() => setSuccessMsg(''), 5000);
@@ -471,9 +484,9 @@ export default function App() {
   const filteredInvData = useMemo(() => getFilteredData(invData, 'inventory'), [invData, filters]);
   
   const allDataForFilters = useMemo(() => [...oppData, ...leadData, ...invData], [oppData, leadData, invData]);
-  const locationOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['Dealer Code'])).filter(Boolean))].sort(), [allDataForFilters]);
-  const consultantOptions = useMemo(() => [...new Set(oppData.map(d => getVal(d, ['Assigned To'])).filter(Boolean))].sort(), [oppData]);
-  const modelOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['modellinefe', 'Model Line'])).filter(Boolean))].sort(), [allDataForFilters]);
+  const locationOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['Dealer Code', 'city'])))].filter(Boolean).sort(), [allDataForFilters]);
+  const consultantOptions = useMemo(() => [...new Set(oppData.map(d => getVal(d, ['Assigned To'])))].filter(Boolean).sort(), [oppData]);
+  const modelOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['modellinefe', 'Model Line'])))].filter(Boolean).sort(), [allDataForFilters]);
 
   // --- METRICS ---
   const funnelStats = useMemo(() => {
@@ -508,7 +521,9 @@ export default function App() {
     const open = filteredInvData.filter(d => {
       const status = (getVal(d, ['Description of Primary Status', 'Primary Status']) || '').toLowerCase();
       // Exclude only sold/customer-allocated states
-      const soldKeywords = ['allotted', 'booked', 'blocked', 'retail', 'delivered', 'allotment'];
+      const soldKeywords = ['allotted', 'booked', 'blocked', 'retail', 'delivered', 'allotment', 'invoice'];
+      // Exception: "Incoming Invoice Created" contains "invoice" but is open stock
+      if (status.includes('incoming invoice created')) return true;
       return !soldKeywords.some(k => status.includes(k));
     }).length;
 
@@ -631,7 +646,7 @@ export default function App() {
             <button onClick={() => setViewMode('dashboard')} className="p-1 hover:bg-slate-100 rounded transition-colors">
                <ArrowDownRight className="w-4 h-4 text-slate-500 rotate-135" />
             </button>
-            <h2 className="text-sm font-bold text-slate-900">{detailedMetric} Deep Analytics</h2>
+            <h2 className="text-sm font-bold text-slate-900 uppercase tracking-tighter italic">{detailedMetric} Deep Analytics</h2>
           </div>
         </div>
 
@@ -730,7 +745,7 @@ export default function App() {
                 <button onClick={() => setViewMode('table')} className={`px-2 py-0.5 rounded text-[9px] font-extrabold ${viewMode === 'table' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>RECORDS</button>
               </div>
               <button onClick={() => setShowImport(true)} className="bg-slate-900 text-white px-2.5 py-0.5 rounded text-[9px] font-bold hover:bg-slate-800 flex items-center gap-1"><Upload className="w-2.5 h-2.5" /> IMPORT</button>
-              <button onClick={clearData} className="p-0.5 text-rose-400 hover:bg-rose-50 rounded transition-colors"><Trash2 className="w-3 h-3" /></button>
+              <button onClick={clearData} className="p-0.5 text-rose-400 hover:bg-rose-50 rounded transition-colors" title="Clear System Memory"><Trash2 className="w-3 h-3" /></button>
            </div>
          </div>
          
