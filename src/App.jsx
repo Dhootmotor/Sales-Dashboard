@@ -292,9 +292,9 @@ const ComparisonTable = ({ rows, headers, updatedAt }) => (
         })}
       </tbody>
     </table>
-    <div className="mt-auto pt-1.5 border-t border-slate-100 flex items-center justify-end px-1 text-[8px] text-slate-700 gap-1 font-bold uppercase tracking-tighter">
+    <div className="mt-auto pt-1.5 border-t border-slate-100 flex items-center justify-end px-1 text-[8px] text-slate-800 gap-1 font-bold uppercase tracking-tighter">
        <Clock className="w-2 h-2" />
-       <span>Updated: {updatedAt || 'Ready'}</span>
+       <span>Refreshed: {updatedAt || 'Ready'}</span>
     </div>
   </div>
 );
@@ -461,34 +461,28 @@ export default function App() {
   // --- FILTERING ---
   const getFilteredData = (data, dataType) => {
     return data.filter(item => {
-      // Robust Branch/Location matching
+      // Robust Model matching
+      const itemModels = [
+        getVal(item, ['modellinefe', 'modelline', 'Model Line', 'Model'])
+      ].map(v => v.trim()).filter(Boolean);
+      const matchModel = filters.model === 'All' || itemModels.includes(filters.model);
+      
+      // IMPORTANT: Inventory records ignore Location and Consultant filters per user request
+      if (dataType === 'inventory') {
+        return matchModel;
+      }
+
+      // Logic for non-inventory types
       const itemLocs = [
         getVal(item, ['Dealer Code']),
         getVal(item, ['Branch Name']),
         getVal(item, ['city']),
         getVal(item, ['Branch'])
       ].map(v => v.trim()).filter(Boolean);
-
       const matchLoc = filters.location === 'All' || itemLocs.includes(filters.location);
 
-      // Robust Model matching
-      const itemModels = [
-        getVal(item, ['modellinefe']),
-        getVal(item, ['modelline']),
-        getVal(item, ['Model Line'])
-      ].map(v => v.trim()).filter(Boolean);
-
-      const matchModel = filters.model === 'All' || itemModels.includes(filters.model);
-      
-      // Robust Consultant matching
       const itemCons = (getVal(item, ['Assigned To', 'owner']) || '').trim();
-      
-      // IMPORTANT: Inventory records don't have Sales Consultants. 
-      // We allow them to show regardless of Consultant filter.
-      let matchCons = true;
-      if (dataType !== 'inventory') {
-        matchCons = filters.consultant === 'All' || itemCons === filters.consultant;
-      }
+      const matchCons = filters.consultant === 'All' || itemCons === filters.consultant;
 
       return matchLoc && matchCons && matchModel;
     });
@@ -532,32 +526,25 @@ export default function App() {
   const inventoryStats = useMemo(() => {
     const total = filteredInvData.length;
     
-    // Detailed logic for stock status based on EXPORT Inventory file
-    const open = filteredInvData.filter(d => {
-      const status = (getVal(d, ['Description of Primary Status', 'Primary Status']) || '').toLowerCase();
-      // Exclude only sold/customer-allocated states
-      const soldKeywords = ['allotted', 'booked', 'blocked', 'retail', 'delivered', 'allotment', 'invoice'];
-      // Exception: "Incoming Invoice Created" contains "invoice" but is open stock
-      if (status.includes('incoming invoice created') || status.includes('status initial')) return true;
-      return !soldKeywords.some(k => status.includes(k));
-    }).length;
+    // Improved logic for stock status based on EXPORT Inventory file
+    // Open Stock = No Sales Order Number
+    const open = filteredInvData.filter(d => !getVal(d, ['Sales Order Number']).trim()).length;
+    
+    // Customer Booked = Has Sales Order Number
+    const booked = filteredInvData.filter(d => getVal(d, ['Sales Order Number']).trim()).length;
 
-    const booked = filteredInvData.filter(d => {
-      const status = (getVal(d, ['Description of Primary Status', 'Primary Status']) || '').toLowerCase();
-      return ['allotted', 'booked', 'blocked'].some(k => status.includes(k));
-    }).length;
-
-    const ageing = filteredInvData.filter(d => {
+    const ageing90 = filteredInvData.filter(d => parseInt(getVal(d, ['Ageing Days']) || '0') > 90).length;
+    const ageing60 = filteredInvData.filter(d => {
       const days = parseInt(getVal(d, ['Ageing Days']) || '0');
-      return days > 90;
+      return days > 60 && days <= 90;
     }).length;
 
     return [
       { label: 'Total Stock', v1: 0, v2: total },
-      { label: 'Open Stock (Inv+Int)', v1: 0, v2: open, sub2: total ? Math.round((open/total)*100)+'%' : '-' },
+      { label: 'Open Stock', v1: 0, v2: open, sub2: total ? Math.round((open/total)*100)+'%' : '-' },
       { label: 'Customer Booked', v1: 0, v2: booked, sub2: total ? Math.round((booked/total)*100)+'%' : '-' },
-      { label: 'Wholesale MTD', v1: 0, v2: 0 },
-      { label: 'Ageing >90 Days', v1: 0, v2: ageing },
+      { label: 'Ageing (60-90D)', v1: 0, v2: ageing60 },
+      { label: 'Ageing (>90D)', v1: 0, v2: ageing90 },
     ];
   }, [filteredInvData]);
 
@@ -654,6 +641,16 @@ export default function App() {
       return Object.entries(months).map(([name, value]) => ({ name, value }));
     }, [oppData]);
 
+    const funnelMix = useMemo(() => {
+      return funnelStats.map(s => ({ name: s.label, val: s.v2 }));
+    }, [funnelStats]);
+
+    const modelMix = useMemo(() => {
+        const counts = {};
+        filteredOppData.forEach(d => { const m = getVal(d, ['modellinefe', 'Model Line']); if(m) counts[m] = (counts[m] || 0) + 1; });
+        return Object.entries(counts).map(([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value).slice(0, 5);
+    }, [filteredOppData]);
+
     return (
       <div className="space-y-3 animate-fade-in">
         <div className="bg-white p-2.5 rounded-lg shadow-sm border border-slate-200 flex items-center justify-between">
@@ -682,6 +679,21 @@ export default function App() {
           </div>
 
           <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
+             <h3 className="font-bold text-slate-800 mb-3 text-[10px] uppercase tracking-wider">Lead Conversion Funnel</h3>
+             <div className="h-56">
+               <ResponsiveContainer width="100%" height="100%">
+                 <BarChart data={funnelMix}>
+                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                   <XAxis dataKey="name" tick={{fontSize: 8}} />
+                   <YAxis tick={{fontSize: 8}} />
+                   <RechartsTooltip contentStyle={{fontSize: '10px'}} />
+                   <Bar dataKey="val" fill="#10b981" radius={[4, 4, 0, 0]} barSize={30} />
+                 </BarChart>
+               </ResponsiveContainer>
+             </div>
+          </div>
+
+          <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
              <h3 className="font-bold text-slate-800 mb-3 text-[10px] uppercase tracking-wider">Volume Trend</h3>
              <div className="h-56">
                <ResponsiveContainer width="100%" height="100%">
@@ -696,13 +708,13 @@ export default function App() {
              </div>
           </div>
           
-          <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200 lg:col-span-2">
-             <h3 className="font-bold text-slate-800 mb-3 text-[10px] uppercase tracking-wider text-center">Lead Source Breakdown</h3>
-             <div className="h-64 flex justify-center">
+          <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
+             <h3 className="font-bold text-slate-800 mb-3 text-[10px] uppercase tracking-wider text-center">Model Mix (Inquiries)</h3>
+             <div className="h-56 flex justify-center">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
-                    <Pie data={sourceStats} innerRadius={45} outerRadius={70} paddingAngle={4} dataKey="v2" nameKey="label">
-                      {sourceStats.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
+                    <Pie data={modelMix} innerRadius={45} outerRadius={70} paddingAngle={4} dataKey="value" nameKey="name">
+                      {modelMix.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
                     </Pie>
                     <RechartsTooltip />
                     <Legend iconSize={8} wrapperStyle={{fontSize: '9px', fontWeight: 600}} />
