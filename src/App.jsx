@@ -82,6 +82,8 @@ const GlobalStyles = () => (
     .card-shadow {
       box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
     }
+    
+    .no-scrollbar::-webkit-scrollbar { display: none; }
   `}</style>
 );
 
@@ -490,7 +492,12 @@ export default function App() {
 
   const filteredOppData = useMemo(() => getFilteredData(oppData, 'opportunities'), [oppData, filters]);
   const filteredLeadData = useMemo(() => getFilteredData(leadData, 'leads'), [leadData, filters]);
-  const filteredInvData = useMemo(() => getFilteredData(invData, 'inventory'), [invData, filters]);
+  
+  // Use RAW invData for calculations to avoid "0" issue from filters
+  const filteredInvData = useMemo(() => {
+    const itemModels = (item) => [getVal(item, ['modellinefe', 'modelline', 'Model Line', 'Model'])].map(v => v.trim()).filter(Boolean);
+    return invData.filter(item => filters.model === 'All' || itemModels(item).includes(filters.model));
+  }, [invData, filters.model]);
   
   const allDataForFilters = useMemo(() => [...oppData, ...leadData, ...invData], [oppData, leadData, invData]);
   const locationOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['Dealer Code', 'Branch Name', 'city'])))].filter(Boolean).sort(), [allDataForFilters]);
@@ -524,29 +531,30 @@ export default function App() {
   }, [filteredOppData, timeLabels]);
 
   const inventoryStats = useMemo(() => {
-    const total = filteredInvData.length;
+    const dataToUse = filteredInvData.length > 0 ? filteredInvData : invData;
+    const total = dataToUse.length;
     
     // Improved logic for stock status based on EXPORT Inventory file
-    // Open Stock = No Sales Order Number
-    const open = filteredInvData.filter(d => !getVal(d, ['Sales Order Number']).trim()).length;
+    // Open Stock = No Sales Order Number AND No GST Invoice
+    const open = dataToUse.filter(d => !getVal(d, ['Sales Order Number']).trim() && !getVal(d, ['GST Invoice No.']).trim()).length;
     
-    // Customer Booked = Has Sales Order Number
-    const booked = filteredInvData.filter(d => getVal(d, ['Sales Order Number']).trim()).length;
+    // Customer Booked = Has Sales Order Number AND No GST Invoice
+    const booked = dataToUse.filter(d => getVal(d, ['Sales Order Number']).trim() && !getVal(d, ['GST Invoice No.']).trim()).length;
 
-    const ageing90 = filteredInvData.filter(d => parseInt(getVal(d, ['Ageing Days']) || '0') > 90).length;
-    const ageing60 = filteredInvData.filter(d => {
+    const ageing90 = dataToUse.filter(d => parseInt(getVal(d, ['Ageing Days']) || '0') > 90).length;
+    const ageing60 = dataToUse.filter(d => {
       const days = parseInt(getVal(d, ['Ageing Days']) || '0');
       return days > 60 && days <= 90;
     }).length;
 
     return [
       { label: 'Total Stock', v1: 0, v2: total },
-      { label: 'Open Stock', v1: 0, v2: open, sub2: total ? Math.round((open/total)*100)+'%' : '-' },
+      { label: 'Open Stock (Avail)', v1: 0, v2: open, sub2: total ? Math.round((open/total)*100)+'%' : '-' },
       { label: 'Customer Booked', v1: 0, v2: booked, sub2: total ? Math.round((booked/total)*100)+'%' : '-' },
       { label: 'Ageing (60-90D)', v1: 0, v2: ageing60 },
       { label: 'Ageing (>90D)', v1: 0, v2: ageing90 },
     ];
-  }, [filteredInvData]);
+  }, [filteredInvData, invData]);
 
   const sourceStats = useMemo(() => {
     const sourceDataset = filteredLeadData.length > 0 ? filteredLeadData : filteredOppData;
