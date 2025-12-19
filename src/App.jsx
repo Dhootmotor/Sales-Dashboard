@@ -60,10 +60,6 @@ const GlobalStyles = () => (
 const COLORS = ['#2563eb', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#f97316'];
 
 // --- HELPERS ---
-/**
- * Advanced CSV Parser that correctly handles quoted strings and 
- * maps keys to lowercase normalized versions for Supabase compatibility.
- */
 const parseCSV = (text) => {
   const lines = text.split(/\r?\n/).filter(l => l.trim());
   if (lines.length < 2) return { headers: [], rows: [] };
@@ -82,26 +78,32 @@ const parseCSV = (text) => {
     return result;
   };
 
-  let headerIndex = 0;
-  // Detect header row
-  for (let i = 0; i < Math.min(lines.length, 20); i++) {
+  let headerIndex = -1;
+  // Robust header detection: scan for standard column names even if there are leading junk lines
+  for (let i = 0; i < Math.min(lines.length, 50); i++) {
     const rawLine = lines[i].toLowerCase();
-    if (rawLine.includes('id') || rawLine.includes('lead') || rawLine.includes('vin') || rawLine.includes('dealer')) {
+    if (
+      (rawLine.startsWith('id,') || rawLine.includes(',customer,')) && 
+      !rawLine.includes('updated on')
+    ) {
       headerIndex = i;
       break;
     }
   }
 
+  if (headerIndex === -1) headerIndex = 0; // Fallback
+
   const rawHeaders = parseLine(lines[headerIndex]);
-  // Clean headers for DB columns: lowercase and no special characters
   const headers = rawHeaders.map(h => h.toLowerCase().trim().replace(/[\s_().-]/g, ''));
   
   const rows = lines.slice(headerIndex + 1).map((line) => {
     const values = parseLine(line);
     const row = {};
-    // Only map known normalized headers to avoid payload bloating
-    headers.forEach((h, i) => { 
-      if (h) row[h] = values[i] || ''; 
+    headers.forEach((h, i) => { if (h) row[h] = values[i] || ''; });
+    // Save original casing just in case for specific logic
+    rawHeaders.forEach((h, i) => { 
+      const key = h.trim(); 
+      if (key) row[key] = values[i] || ''; 
     });
     return row;
   });
@@ -109,14 +111,10 @@ const parseCSV = (text) => {
   return { rows, rawHeaders }; 
 };
 
-/**
- * Robust value getter that checks multiple possible keys/variants
- */
 const getVal = (d, keys) => {
   if (!d) return '';
   for(let k of keys) {
     if (d[k] !== undefined && d[k] !== null && d[k] !== '') return String(d[k]);
-    // Try normalized variant
     const normalized = k.toLowerCase().replace(/[\s_().-]/g, '');
     if (d[normalized] !== undefined && d[normalized] !== null && d[normalized] !== '') return String(d[normalized]);
   }
@@ -124,43 +122,33 @@ const getVal = (d, keys) => {
 };
 
 // --- DATA HANDLERS ---
-/**
- * Uploads data in chunks to prevent server-side errors on large files.
- * Provides granular progress tracking.
- */
 const uploadToSupabaseBatch = async (userId, tableName, data, onProgress) => {
   if (!supabase) throw new Error("Supabase client not initialized.");
   
   const conflictColumn = tableName === 'opportunities' ? 'id' : (tableName === 'leads' ? 'leadid' : 'vin');
   
-  // Transform and sanitize data before sending to Cloud
   const records = data.map(item => ({
     ...item,
     user_id: userId,
-    // Ensure primary IDs are correctly mapped for the conflict resolution
     id: tableName === 'opportunities' ? (getVal(item, ['id', 'opportunityid'])) : undefined,
     leadid: tableName === 'leads' ? (getVal(item, ['leadid', 'lead id'])) : undefined,
     vin: (tableName === 'inventory' || tableName === 'bookings') ? (getVal(item, ['vin', 'Vehicle ID No.'])) : undefined
   }));
 
-  // Chunk size reduced for high column-count files like Opportunities
   const CHUNK_SIZE = 50; 
   for (let i = 0; i < records.length; i += CHUNK_SIZE) {
     const chunk = records.slice(i, i + CHUNK_SIZE);
-    
-    // Using upsert with conflict column to prevent duplicate records
     const { error } = await supabase
       .from(tableName)
       .upsert(chunk, { onConflict: conflictColumn });
       
     if (error) {
-      console.error(`Chunk Upload Error at row ${i}:`, error);
-      throw new Error(`Cloud Sync Failed: ${error.message}`);
+      console.error(`Error uploading chunk at row ${i}:`, error);
+      throw error;
     }
     
     if (onProgress) {
-      const currentProgress = Math.min(100, Math.round(((i + chunk.length) / records.length) * 100));
-      onProgress(currentProgress);
+      onProgress(Math.min(100, Math.round(((i + chunk.length) / records.length) * 100)));
     }
   }
   return data.length;
@@ -176,20 +164,24 @@ export default function App() {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [successMsg, setSuccessMsg] = useState('');
-  const [showImport, setShowImport] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  // Auth State Management
+  // Auth State
   useEffect(() => {
     if (supabase) {
-      supabase.auth.getSession().then(({ data: { session } }) => setUser(session?.user || null));
-      const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => setUser(session?.user || null));
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        setUser(session?.user || null);
+        setLoading(false);
+      });
+      const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+        setUser(session?.user || null);
+      });
       return () => subscription.unsubscribe();
+    } else {
+      setLoading(false);
     }
   }, []);
 
-  /**
-   * Loads user data from Supabase.
-   */
   const loadData = useCallback(async () => {
     if (!user) return;
     try {
@@ -213,11 +205,11 @@ export default function App() {
     }
   }, [user]);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  // Load data as soon as user is authenticated
+  useEffect(() => { 
+    if (user) loadData(); 
+  }, [user, loadData]);
 
-  /**
-   * Entry point for CSV upload. Identifies data type and triggers batch sync.
-   */
   const handleImport = async (e) => {
     const file = e.target.files[0];
     if (!file || !user) return;
@@ -238,30 +230,32 @@ export default function App() {
 
         if (type === 'unknown') throw new Error("Could not identify CSV type. Please ensure headers match standard formats.");
 
-        // Clean UI notification during chunking
         await uploadToSupabaseBatch(user.id, type, rows, (p) => setUploadProgress(p));
         
         await loadData();
-        setSuccessMsg(`Successfully synchronized ${rows.length} records to ${type}.`);
+        setSuccessMsg(`Synchronized ${rows.length} records to ${type.toUpperCase()}.`);
         setTimeout(() => setSuccessMsg(''), 5000);
       } catch (err) {
-        alert("Upload Error: " + err.message);
+        alert("Sync Error: " + err.message);
       } finally {
         setIsUploading(false);
         setUploadProgress(0);
-        // Clear input value so same file can be uploaded again if needed
         e.target.value = '';
       }
     };
     reader.readAsText(file);
   };
 
-  /**
-   * Metrics calculation for Dashboard Tiles.
-   */
+  const clearData = async (table) => {
+    if (!window.confirm(`Clear all ${table} data?`)) return;
+    try {
+      await supabase.from(table).delete().eq('user_id', user.id);
+      loadData();
+    } catch (e) { alert(e.message); }
+  };
+
   const stats = useMemo(() => {
     const totalOpps = oppData.length;
-    // Map Hot leads based on multiple potential field names in CSV
     const hotOpps = oppData.filter(d => 
       getVal(d, ['ZQualificationLevel', 'status', 'level']).toLowerCase().includes('hot')
     ).length;
@@ -270,6 +264,8 @@ export default function App() {
     
     return { totalOpps, hotOpps, totalLeads, stock };
   }, [oppData, leadData, invData]);
+
+  if (loading) return <div className="h-screen flex items-center justify-center text-slate-400 font-bold uppercase tracking-widest animate-pulse">Initializing Sales IQ...</div>;
 
   return (
     <div className="min-h-screen bg-[#f8fafc]">
@@ -288,21 +284,21 @@ export default function App() {
           {isUploading && (
             <div className="flex items-center gap-3 mr-4">
               <div className="text-[10px] font-bold text-blue-600 uppercase italic animate-pulse">
-                Cloud Sync: {uploadProgress}%
+                Syncing: {uploadProgress}%
               </div>
               <div className="w-24 bg-slate-100 h-1.5 rounded-full overflow-hidden">
                 <div 
-                  className="bg-blue-600 h-full transition-all duration-300 ease-out" 
+                  className="bg-blue-600 h-full transition-all duration-300" 
                   style={{width: `${uploadProgress}%`}}
                 ></div>
               </div>
             </div>
           )}
           
-          <label className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-all shadow-sm ${isUploading ? 'bg-slate-200 text-slate-500 cursor-not-allowed' : 'bg-slate-900 text-white cursor-pointer hover:bg-blue-600'}`}>
+          <label className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-all shadow-sm ${isUploading || !user ? 'bg-slate-200 text-slate-500 cursor-not-allowed' : 'bg-slate-900 text-white cursor-pointer hover:bg-blue-600'}`}>
             <Upload className="w-4 h-4" /> 
             {isUploading ? 'SYNCING...' : 'SYNC CSV'}
-            <input type="file" className="hidden" accept=".csv" onChange={handleImport} disabled={isUploading} />
+            <input type="file" className="hidden" accept=".csv" onChange={handleImport} disabled={isUploading || !user} />
           </label>
         </div>
       </nav>
@@ -315,42 +311,48 @@ export default function App() {
           </div>
         )}
 
+        {!user && (
+          <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl flex items-center gap-3 text-amber-700 font-bold text-xs uppercase tracking-tight">
+             <AlertTriangle className="w-4 h-4" /> Sign in required to sync cloud data. 
+          </div>
+        )}
+
         {/* Dashboard Tiles */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           <div className="bg-white p-6 rounded-2xl border border-slate-100 card-shadow group hover:border-blue-200 transition-colors">
             <div className="flex justify-between items-start mb-4">
               <div className="p-2 bg-blue-50 text-blue-600 rounded-xl"><LayoutDashboard className="w-5 h-5" /></div>
-              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest group-hover:text-blue-500 transition-colors">Inquiries</span>
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Inquiries</span>
             </div>
             <div className="text-3xl font-black text-slate-900">{stats.totalOpps.toLocaleString()}</div>
-            <div className="text-[10px] font-bold text-slate-400 mt-1 uppercase tracking-tighter">Total Pipeline Volume</div>
+            <div className="text-[10px] font-bold text-slate-400 mt-1 uppercase">Total Pipeline</div>
           </div>
 
           <div className="bg-white p-6 rounded-2xl border border-slate-100 card-shadow group hover:border-rose-200 transition-colors">
             <div className="flex justify-between items-start mb-4">
               <div className="p-2 bg-rose-50 text-rose-600 rounded-xl"><TrendingUp className="w-5 h-5" /></div>
-              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest group-hover:text-rose-500 transition-colors">Hot Pool</span>
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Hot Pool</span>
             </div>
             <div className="text-3xl font-black text-slate-900">{stats.hotOpps.toLocaleString()}</div>
-            <div className="text-[10px] font-bold text-slate-400 mt-1 uppercase tracking-tighter">High Intent Opportunities</div>
+            <div className="text-[10px] font-bold text-slate-400 mt-1 uppercase">High Intent</div>
           </div>
 
           <div className="bg-white p-6 rounded-2xl border border-slate-100 card-shadow group hover:border-amber-200 transition-colors">
             <div className="flex justify-between items-start mb-4">
               <div className="p-2 bg-amber-50 text-amber-600 rounded-xl"><Users className="w-5 h-5" /></div>
-              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest group-hover:text-amber-500 transition-colors">Leads</span>
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Leads</span>
             </div>
             <div className="text-3xl font-black text-slate-900">{stats.totalLeads.toLocaleString()}</div>
-            <div className="text-[10px] font-bold text-slate-400 mt-1 uppercase tracking-tighter">Raw Digital Traffic</div>
+            <div className="text-[10px] font-bold text-slate-400 mt-1 uppercase">Digital Inflow</div>
           </div>
 
           <div className="bg-white p-6 rounded-2xl border border-slate-100 card-shadow group hover:border-emerald-200 transition-colors">
             <div className="flex justify-between items-start mb-4">
               <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl"><Car className="w-5 h-5" /></div>
-              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest group-hover:text-emerald-500 transition-colors">Inventory</span>
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Inventory</span>
             </div>
             <div className="text-3xl font-black text-slate-900">{stats.stock.toLocaleString()}</div>
-            <div className="text-[10px] font-bold text-slate-400 mt-1 uppercase tracking-tighter">Available Stock Units</div>
+            <div className="text-[10px] font-bold text-slate-400 mt-1 uppercase">Live Units</div>
           </div>
         </div>
 
@@ -396,21 +398,24 @@ export default function App() {
         {/* Activity Feed / Table */}
         <div className="bg-white rounded-2xl border border-slate-100 card-shadow overflow-hidden">
           <div className="px-6 py-4 border-b border-slate-50 flex justify-between items-center bg-slate-50/50">
-             <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider italic">Inquiry Stream Monitor</h3>
-             <button className="text-[10px] font-bold text-blue-600 hover:text-blue-800 transition-colors">FULL REPORT</button>
+             <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider italic">Stream Monitor</h3>
+             <div className="flex gap-2">
+               <button onClick={() => clearData('opportunities')} className="text-[10px] font-bold text-rose-500 flex items-center gap-1 hover:underline"><Trash2 className="w-3 h-3" /> CLEAR OPPS</button>
+               <button onClick={() => clearData('inventory')} className="text-[10px] font-bold text-rose-500 flex items-center gap-1 hover:underline"><Trash2 className="w-3 h-3" /> CLEAR INV</button>
+             </div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left">
               <thead className="text-[10px] font-black text-slate-400 uppercase tracking-widest bg-slate-50 border-b border-slate-100">
                 <tr>
                   <th className="px-6 py-3">Customer</th>
-                  <th className="px-6 py-3">Product Line</th>
-                  <th className="px-6 py-3">Source Channel</th>
+                  <th className="px-6 py-3">Product</th>
+                  <th className="px-6 py-3">Source</th>
                   <th className="px-6 py-3">Stage</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
-                {oppData.slice(-15).reverse().map((row, idx) => (
+                {[...oppData].reverse().slice(0, 20).map((row, idx) => (
                   <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
                     <td className="px-6 py-4 text-xs font-bold text-slate-900">{getVal(row, ['Customer', 'first_name']) || 'Anonymous'}</td>
                     <td className="px-6 py-4 text-xs text-slate-600 font-medium">{getVal(row, ['modellinefe', 'Model Line', 'Model'])}</td>
@@ -425,12 +430,11 @@ export default function App() {
               </tbody>
             </table>
             {oppData.length === 0 && (
-              <div className="py-20 flex flex-col items-center justify-center animate-fade-in">
+              <div className="py-20 flex flex-col items-center justify-center">
                  <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mb-4">
                     <FileSpreadsheet className="w-8 h-8 text-slate-200" />
                  </div>
-                 <p className="text-slate-400 font-bold text-xs uppercase tracking-widest italic">Awaiting Opportunity Inflow</p>
-                 <p className="text-slate-300 text-[10px] mt-2">Upload your CSV file to populate the stream.</p>
+                 <p className="text-slate-400 font-bold text-xs uppercase tracking-widest italic">Awaiting Sync</p>
               </div>
             )}
           </div>
