@@ -148,21 +148,36 @@ const getVal = (d, keys) => {
 const uploadToSupabase = async (userId, tableName, data) => {
   if (!supabase) throw new Error("Supabase client not initialized.");
   
-  const records = data.map(item => ({
-    ...item,
-    user_id: userId,
-    id: tableName === 'opportunities' ? (getVal(item, ['id', 'opportunityid'])) : undefined,
-    leadid: tableName === 'leads' ? (getVal(item, ['leadid', 'lead id'])) : undefined,
-    vin: tableName === 'inventory' ? (getVal(item, ['Vehicle Identification Number', 'vin'])) : undefined
-  }));
+  const records = data.map(item => {
+    const base = { ...item, user_id: userId };
+    
+    // Explicitly mapping identification keys to ensure Supabase conflict logic works
+    if (tableName === 'opportunities') {
+      base.id = getVal(item, ['id', 'opportunityid']);
+    } else if (tableName === 'leads') {
+      base.leadid = getVal(item, ['leadid', 'lead id']);
+    } else if (tableName === 'inventory') {
+      // VINs are often case sensitive in DBs, force consistency here
+      base.vin = getVal(item, ['vin', 'vehicle identification number']).trim().toUpperCase();
+    } else if (tableName === 'bookings') {
+      // For bookings, we might want a composite key or a specific ID if available
+      base.vin = getVal(item, ['vin', 'vehicle id no.']).trim().toUpperCase();
+    }
+    
+    return base;
+  });
 
+  // Critical: The 'onConflict' column must have a UNIQUE constraint in Supabase SQL
   const conflictColumn = tableName === 'opportunities' ? 'id' : (tableName === 'leads' ? 'leadid' : 'vin');
 
   const { error } = await supabase
     .from(tableName)
     .upsert(records, { onConflict: conflictColumn });
 
-  if (error) throw error;
+  if (error) {
+    console.error(`Error uploading to ${tableName}:`, error);
+    throw error;
+  }
   return data.length;
 };
 
@@ -170,8 +185,9 @@ const mergeLocalData = (currentData, newData, type) => {
   const getKey = (item) => {
     if (type === 'opportunities') return getVal(item, ['id', 'opportunityid']);
     if (type === 'leads') return getVal(item, ['leadid', 'lead id']);
-    if (type === 'inventory') return getVal(item, ['Vehicle Identification Number', 'vin']);
-    if (type === 'bookings') return getVal(item, ['Vehicle ID No.', 'VIN']);
+    // Normalizing VIN for local storage lookup too
+    if (type === 'inventory') return getVal(item, ['vin', 'vehicle identification number']).trim().toUpperCase();
+    if (type === 'bookings') return getVal(item, ['vin', 'vehicle id no.']).trim().toUpperCase();
     return Math.random().toString();
   };
 
@@ -202,10 +218,16 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) =>
       const { rows, rawHeaders } = await readFile(file);
       const headerString = rawHeaders.join(',').toLowerCase();
       let type = 'unknown';
+      
+      // Detection logic
       if (headerString.includes('opportunity offline score')) type = 'opportunities';
       else if (headerString.includes('booking to delivery') || headerString.includes('model text 1')) type = 'bookings';
       else if (headerString.includes('lead id') || headerString.includes('qualification level')) type = 'leads';
       else if (headerString.includes('vehicle identification number') || headerString.includes('grn date')) type = 'inventory'; 
+
+      if (type === 'unknown') {
+        throw new Error("Could not identify file type. Please check the CSV headers.");
+      }
 
       await onDataImported(rows, type, overwrite);
       setFile(null);
@@ -315,7 +337,6 @@ export default function App() {
   const [showImport, setShowImport] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [viewMode, setViewMode] = useState('dashboard'); 
-  const [detailedMetric, setDetailedMetric] = useState('Inquiries');
   const [successMsg, setSuccessMsg] = useState(''); 
   const [timeView, setTimeView] = useState('CY'); 
   const [filters, setFilters] = useState({ model: 'All', location: 'All', consultant: 'All' });
@@ -415,11 +436,18 @@ export default function App() {
     const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     try {
       if (storageMode === 'cloud' && user) {
-         if (overwrite) await supabase.from(type).delete().eq('user_id', user.id);
+         if (overwrite) {
+           const { error: delErr } = await supabase.from(type).delete().eq('user_id', user.id);
+           if (delErr) console.warn("Delete failed, likely no data existing:", delErr);
+         }
+         
          const count = await uploadToSupabase(user.id, type, newData);
-         setSuccessMsg(`Synced ${count} to Supabase`);
-         // Immediate refresh
-         const { data } = await supabase.from(type).select('*').eq('user_id', user.id);
+         setSuccessMsg(`Synced ${count} to Supabase (${type})`);
+         
+         // Immediate refresh from DB
+         const { data, error: fetchErr } = await supabase.from(type).select('*').eq('user_id', user.id);
+         if (fetchErr) throw fetchErr;
+         
          if (type === 'opportunities') setOppData(data);
          else if (type === 'leads') setLeadData(data);
          else if (type === 'inventory') setInvData(data);
@@ -443,14 +471,15 @@ export default function App() {
       setTimestamps(prev => ({...prev, [type]: now}));
       setTimeout(() => setSuccessMsg(''), 5000);
     } catch (e) {
-      alert("Error: " + e.message);
+      console.error("Import Error:", e);
+      alert("Error Syncing with Supabase: " + e.message);
     } finally {
       setIsUploading(false);
     }
   };
 
   const clearData = async () => {
-    if(window.confirm("System Reset?")) {
+    if(window.confirm("System Reset? This will wipe ALL records.")) {
        if (storageMode === 'cloud' && user) {
           await supabase.from('opportunities').delete().eq('user_id', user.id);
           await supabase.from('leads').delete().eq('user_id', user.id);
@@ -469,16 +498,16 @@ export default function App() {
   // --- FILTERING ---
   const getFilteredData = (data, dataType) => {
     return data.filter(item => {
-      // INVENTORY Logic: User asked to ignore location and consultant
+      // Inventory filter logic
       if (dataType === 'inventory') {
-        const itemModel = getVal(item, ['modellinefe', 'Model Line', 'Model']).trim();
+        const itemModel = getVal(item, ['modellinefe', 'model line', 'model']).trim();
         return filters.model === 'All' || itemModel === filters.model;
       }
 
       const itemLocs = [getVal(item, ['Dealer Code']), getVal(item, ['Branch Name']), getVal(item, ['city'])].map(v => v.trim()).filter(Boolean);
       const matchLoc = filters.location === 'All' || itemLocs.includes(filters.location);
 
-      const itemModel = getVal(item, ['modellinefe', 'Model Line', 'Model']).trim();
+      const itemModel = getVal(item, ['modellinefe', 'model line', 'model']).trim();
       const matchModel = filters.model === 'All' || itemModel === filters.model;
 
       const itemCons = getVal(item, ['Assigned To', 'owner']).trim();
@@ -495,7 +524,7 @@ export default function App() {
   const allDataForFilters = useMemo(() => [...oppData, ...leadData, ...invData], [oppData, leadData, invData]);
   const locationOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['Dealer Code', 'city'])))].filter(Boolean).sort(), [allDataForFilters]);
   const consultantOptions = useMemo(() => [...new Set(oppData.map(d => getVal(d, ['Assigned To'])))].filter(Boolean).sort(), [oppData]);
-  const modelOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['modellinefe', 'Model Line'])))].filter(Boolean).sort(), [allDataForFilters]);
+  const modelOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['modellinefe', 'model line'])))].filter(Boolean).sort(), [allDataForFilters]);
 
   // --- METRICS ---
   const funnelStats = useMemo(() => {
@@ -524,23 +553,18 @@ export default function App() {
   }, [filteredOppData, timeLabels]);
 
   const inventoryStats = useMemo(() => {
-    // Inventory uses filteredInvData which only respects Model filter
     const total = filteredInvData.length;
     
-    // Prepare Booking lookup codes
-    const bookedVinSet = new Set(bookingData.map(b => getVal(b, ['Vehicle ID No.', 'VIN']).trim()).filter(Boolean));
-    const bookingModelTexts = bookingData.map(b => getVal(b, ['Model Text 1']).toLowerCase());
+    const bookedVinSet = new Set(bookingData.map(b => getVal(b, ['vin', 'vehicle id no.']).trim().toUpperCase()).filter(Boolean));
+    const bookingModelTexts = bookingData.map(b => getVal(b, ['model text 1']).toLowerCase());
 
     const checkIsBooked = (d) => {
-      const vin = getVal(d, ['Vehicle Identification Number', 'vin']).trim();
+      const vin = getVal(d, ['vin', 'vehicle identification number']).trim().toUpperCase();
       const salesOrder = getVal(d, ['Sales Order Number']).trim();
       const modelCode = getVal(d, ['Model Sales Code']).toLowerCase().trim();
 
-      // 1. By Sales Order Presence
       if (salesOrder) return true;
-      // 2. By VIN match in Booking sheet
       if (vin && bookedVinSet.has(vin)) return true;
-      // 3. By Model Code lookup in Booking sheet (per user logic)
       if (modelCode && bookingModelTexts.some(txt => txt.includes(modelCode))) return true;
 
       return false;
@@ -549,7 +573,6 @@ export default function App() {
     const bookedCount = filteredInvData.filter(checkIsBooked).length;
     const openCount = total - bookedCount;
 
-    // Opening Stock: Before current month & not booked
     const currentMonthLabel = timeLabels.currLabel;
     const openingStock = filteredInvData.filter(d => {
       const month = getMonthStr(getVal(d, ['GRN Date']));
@@ -579,7 +602,7 @@ export default function App() {
   // --- VIEWS ---
   const DashboardView = () => (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 animate-fade-in">
-       <div className="bg-white rounded-lg card-shadow p-2 flex flex-col hover:border-blue-200 border border-transparent transition-all group cursor-pointer" onClick={() => { setDetailedMetric('Inquiries'); setViewMode('detailed'); }}>
+       <div className="bg-white rounded-lg card-shadow p-2 flex flex-col hover:border-blue-200 border border-transparent transition-all group cursor-pointer" onClick={() => setViewMode('detailed')}>
           <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
             <LayoutDashboard className="w-3 h-3 text-blue-600" />
             <h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Sales Funnel</h3>
@@ -666,7 +689,7 @@ export default function App() {
 
     const modelMix = useMemo(() => {
         const counts = {};
-        filteredOppData.forEach(d => { const m = getVal(d, ['modellinefe', 'Model Line']); if(m) counts[m] = (counts[m] || 0) + 1; });
+        filteredOppData.forEach(d => { const m = getVal(d, ['modellinefe', 'model line']); if(m) counts[m] = (counts[m] || 0) + 1; });
         return Object.entries(counts).map(([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value).slice(0, 5);
     }, [filteredOppData]);
 
@@ -739,15 +762,15 @@ export default function App() {
        <div className="overflow-x-auto">
          <table className="w-full text-left text-[10px] text-slate-600">
            <thead className="bg-slate-50 text-slate-400 font-bold border-b border-slate-200 uppercase tracking-tighter">
-             <tr><th className="p-2">ID</th><th className="p-2">Customer</th><th className="p-2">Model</th><th className="p-2">Date</th><th className="p-2">Status</th></tr>
+             <tr><th className="p-2">ID/VIN</th><th className="p-2">Customer/Vehicle</th><th className="p-2">Model</th><th className="p-2">Date</th><th className="p-2">Status</th></tr>
            </thead>
            <tbody className="divide-y divide-slate-100">
-             {(filteredOppData.length > 0 ? filteredOppData : filteredLeadData).slice(0, 50).map((row, idx) => (
+             {[...oppData, ...leadData, ...invData].slice(0, 50).map((row, idx) => (
                <tr key={idx} className="hover:bg-slate-50 transition-colors">
                  <td className="p-2 font-mono text-slate-400 text-[8px]">{getVal(row, ['id', 'leadid', 'vin'])}</td>
-                 <td className="p-2 font-semibold text-slate-800">{getVal(row, ['customer', 'name']) || 'Anonymous'}</td>
-                 <td className="p-2">{getVal(row, ['modelline', 'Model Line'])}</td>
-                 <td className="p-2">{getVal(row, ['createdon', 'createddate'])}</td>
+                 <td className="p-2 font-semibold text-slate-800">{getVal(row, ['customer', 'name', 'model line']) || 'Record'}</td>
+                 <td className="p-2">{getVal(row, ['modelline', 'model line'])}</td>
+                 <td className="p-2">{getVal(row, ['createdon', 'createddate', 'grn date'])}</td>
                  <td className="p-2"><span className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-100 text-[8px] font-bold">{getVal(row, ['status', 'qualificationlevel']) || 'Active'}</span></td>
                </tr>
              ))}
