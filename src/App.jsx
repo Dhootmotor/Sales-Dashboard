@@ -111,8 +111,8 @@ const parseCSV = (text) => {
   let headerIndex = 0;
   for (let i = 0; i < Math.min(lines.length, 20); i++) {
     const rawLine = lines[i].toLowerCase();
-    // Broaden detection for specific file headers provided
-    const keywords = ['id', 'lead id', 'order number', 'vin', 'engine number', 'engine code', 'grn date'];
+    // Keywords for specific file types
+    const keywords = ['lead id', 'order number', 'vin', 'engine number', 'engine code', 'grn date', 'opportunity id'];
     if (keywords.some(k => rawLine.includes(k))) {
       headerIndex = i;
       break;
@@ -120,13 +120,14 @@ const parseCSV = (text) => {
   }
 
   const rawHeaders = parseLine(lines[headerIndex]);
+  // Strictly clean headers for internal key mapping
   const headers = rawHeaders.map(h => h.toLowerCase().trim().replace(/[\s_().-]/g, ''));
   
   const rows = lines.slice(headerIndex + 1).map((line) => {
     const values = parseLine(line);
     const row = {};
     headers.forEach((h, i) => { if (h) row[h] = values[i] || ''; });
-    // Also include normalized keys that might contain spaces
+    // Also store lowercase spaced version for flexibility
     rawHeaders.forEach((h, i) => {
         const key = h.trim().toLowerCase();
         if (key && !row[key]) row[key] = values[i] || '';
@@ -137,12 +138,18 @@ const parseCSV = (text) => {
   return { rows, rawHeaders }; 
 };
 
+// Extremely robust getter for CSV/SQL objects
 const getVal = (d, keys) => {
   if (!d) return '';
   for(let k of keys) {
-    const key = k.toLowerCase().replace(/[\s_().-]/g, '');
-    if (d[key] !== undefined && d[key] !== null) return String(d[key]);
+    // Try provided key as-is
     if (d[k] !== undefined && d[k] !== null) return String(d[k]);
+    // Try normalized version (lowercase, no spaces)
+    const normalized = k.toLowerCase().replace(/[\s_().-]/g, '');
+    if (d[normalized] !== undefined && d[normalized] !== null) return String(d[normalized]);
+    // Try lowercase with spaces
+    const lower = k.toLowerCase().trim();
+    if (d[lower] !== undefined && d[lower] !== null) return String(d[lower]);
   }
   return '';
 };
@@ -154,46 +161,51 @@ const uploadToSupabase = async (userId, tableName, data) => {
   const records = data.map(item => {
     const base = { user_id: userId };
     
+    // Logic: Map common automotive identifiers to standardized SQL columns
     if (tableName === 'inventory') {
-      // Mapping from EXPORT Inventory.csv
-      base.enginenumber = getVal(item, ['enginenumber', 'engine number']).trim().toUpperCase();
+      base.enginenumber = getVal(item, ['enginenumber', 'engine number', 'engine code']).trim().toUpperCase();
       base.modelline = getVal(item, ['modelline', 'model line']);
       base.modelsalescode = getVal(item, ['modelsalescode', 'model sales code']);
-      base.vehicleidentificationnumber = getVal(item, ['vehicleidentificationnumber', 'vin']);
+      base.vehicleidentificationnumber = getVal(item, ['vehicleidentificationnumber', 'vin', 'vehicle identification number']);
       base.grndate = getVal(item, ['grndate', 'grn date']);
       base.ageingdays = getVal(item, ['ageingdays', 'ageing days']);
       base.salesordernumber = getVal(item, ['salesordernumber', 'sales order number']);
-      base.gstinvoiceno = getVal(item, ['gstinvoiceno', 'gst invoice no']);
-      base.colordescription = getVal(item, ['colordescription', 'color description']);
+      base.gstinvoiceno = getVal(item, ['gstinvoiceno', 'gst invoice no', 'gst invoice number']);
+      base.colordescription = getVal(item, ['colordescription', 'color description', 'color']);
     } else if (tableName === 'opportunities') {
-      base.id = getVal(item, ['id', 'opportunityid']);
-      base.customer = getVal(item, ['customer', 'customername']);
+      base.id = getVal(item, ['id', 'opportunityid', 'opportunity id']);
+      base.customer = getVal(item, ['customer', 'customername', 'customer name']);
       base.modelline = getVal(item, ['modelline', 'model line']);
-      base.createdon = getVal(item, ['createdon', 'createddate']);
-      base.testdrivecompleted = getVal(item, ['testdrivecompleted']);
-      base.ordernumber = getVal(item, ['ordernumber', 'salesordernumber', 'sales order number']);
-      base.assignedto = getVal(item, ['assignedto', 'owner']);
+      base.createdon = getVal(item, ['createdon', 'createddate', 'document date']);
+      base.testdrivecompleted = getVal(item, ['testdrivecompleted', 'test drive vehicle']);
+      base.ordernumber = getVal(item, ['ordernumber', 'sales order number', 'salesorder']);
+      base.assignedto = getVal(item, ['assignedto', 'owner', 'employee name']);
     } else if (tableName === 'leads') {
-      base.leadid = getVal(item, ['leadid', 'lead id']);
-      base.name = getVal(item, ['name', 'customer']);
-      base.source = getVal(item, ['source']);
-      base.qualificationlevel = getVal(item, ['qualificationlevel']);
+      base.leadid = getVal(item, ['leadid', 'lead id', 'lead_id']);
+      base.name = getVal(item, ['name', 'customer name', 'customer']);
+      base.source = getVal(item, ['source', 'source description']);
+      base.qualificationlevel = getVal(item, ['qualificationlevel', 'status']);
     } else if (tableName === 'bookings') {
-      // Mapping from EXPORT- Booking to delivery data.csv
-      // Note: Header is 'Engine Code' in this file
+      // Header in delivery file is 'Engine Code'
       base.enginenumber = getVal(item, ['enginecode', 'engine code', 'enginenumber', 'engine number']).trim().toUpperCase();
       base.modeltext1 = getVal(item, ['modeltext1', 'model text 1']);
       base.ordernumber = getVal(item, ['invoice number', 'invoicenumber', 'ordernumber', 'sales order number']);
-      base.vin = getVal(item, ['vehicleidno', 'vehicle id no']);
+      base.vin = getVal(item, ['vehicleidno', 'vehicle id no', 'vin']);
     }
     
     return base;
   });
 
-  // Filter out records without valid IDs
-  const validRecords = records.filter(r => 
-    tableName === 'opportunities' ? r.id : (tableName === 'leads' ? r.leadid : r.enginenumber)
-  );
+  // Critical: Only send records with valid unique identifiers
+  const validRecords = records.filter(r => {
+    if (tableName === 'opportunities') return !!r.id;
+    if (tableName === 'leads') return !!r.leadid;
+    return !!r.enginenumber;
+  });
+
+  if (validRecords.length === 0) {
+    throw new Error(`No valid data found in CSV for table ${tableName}. Please check headers.`);
+  }
 
   const conflictColumn = tableName === 'opportunities' ? 'id' : (tableName === 'leads' ? 'leadid' : 'enginenumber');
 
@@ -207,6 +219,111 @@ const uploadToSupabase = async (userId, tableName, data) => {
   }
   return validRecords.length;
 };
+
+// --- COMPONENTS ---
+const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading }) => {
+  const [file, setFile] = useState(null);
+  const [overwrite, setOverwrite] = useState(false);
+  
+  const handleFileChange = (e) => { if (e.target.files[0]) setFile(e.target.files[0]); };
+
+  const processFiles = async () => {
+    if (!file) return;
+    const readFile = (f) => new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve(parseCSV(e.target.result));
+      reader.readAsText(f);
+    });
+
+    try {
+      const { rows, rawHeaders } = await readFile(file);
+      const headerString = rawHeaders.join(',').toLowerCase();
+      let type = 'unknown';
+      
+      // Intelligent detection based on specific file signatures
+      if (headerString.includes('opportunity id') || headerString.includes('test drive vehicle')) type = 'opportunities';
+      else if (headerString.includes('engine code') || headerString.includes('model text 1')) type = 'bookings';
+      else if (headerString.includes('lead id') || headerString.includes('lead_id')) type = 'leads';
+      else if (headerString.includes('engine number') || headerString.includes('grn date') || headerString.includes('ageing days')) type = 'inventory'; 
+
+      if (type === 'unknown') throw new Error("CSV structure unrecognized. Please ensure you are uploading the 'EXPORT' format files.");
+
+      await onDataImported(rows, type, overwrite);
+      setFile(null);
+      onClose();
+    } catch (error) {
+      alert("Import Error: " + error.message);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center backdrop-blur-sm px-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-fade-in border border-slate-200">
+        <div className="bg-slate-900 px-5 py-3 flex justify-between items-center">
+          <h2 className="text-white font-bold text-sm flex items-center gap-2">
+            <Upload className="w-4 h-4 text-blue-400" /> Sync Master Data
+          </h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
+        </div>
+        
+        <div className="p-5 space-y-4">
+          <div className="border-2 border-dashed border-slate-200 rounded-xl p-8 hover:border-blue-500 transition-all bg-slate-50 relative flex flex-col items-center justify-center text-center cursor-pointer">
+                <FileSpreadsheet className="w-8 h-8 text-blue-600 mb-2" /> 
+                <div className="text-slate-900 font-bold text-sm">{file ? file.name : "Select Inventory or Booking CSV"}</div>
+                <input type="file" accept=".csv" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onChange={handleFileChange} />
+          </div>
+
+          <div className="flex items-center gap-2 bg-slate-50 p-2 rounded-lg border border-slate-100">
+             <input type="checkbox" id="overwrite" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} className="w-4 h-4 rounded text-blue-600" />
+             <label htmlFor="overwrite" className="text-[11px] font-bold text-slate-600 cursor-pointer">Clear existing SQL records before sync</label>
+          </div>
+        </div>
+
+        <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-200 rounded-lg">Cancel</button>
+          <button onClick={processFiles} disabled={isUploading || !file} className={`px-5 py-1.5 text-[11px] font-bold text-white rounded-lg transition-all ${isUploading || !file ? 'bg-slate-400' : 'bg-blue-600 hover:bg-blue-700'}`}>
+            {isUploading ? 'Updating SQL...' : 'Sync to Cloud'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const ComparisonTable = ({ rows, headers, updatedAt }) => (
+  <div className="flex flex-col h-full overflow-hidden">
+    <table className="w-full text-xs text-left border-separate border-spacing-0">
+      <thead className="text-[9px] uppercase text-slate-400 bg-slate-50/50 font-bold tracking-wider sticky top-0">
+        <tr>
+          <th className="py-1 pl-2 w-[35%] border-b border-slate-100">Metric</th>
+          <th className="py-1 text-right w-[15%] px-1 border-l border-b border-slate-100/50">{headers[0] || 'Prv'}</th>
+          <th className="py-1 text-right w-[15%] px-1 text-slate-300 border-b border-slate-100">%</th>
+          <th className="py-1 text-right w-[15%] px-1 border-l border-b border-slate-100/50">{headers[1] || 'Cur'}</th>
+          <th className="py-1 text-right w-[15%] px-1 text-blue-400 border-b border-slate-100">%</th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-slate-50">
+        {rows.map((row, idx) => (
+          <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
+            <td className="py-1 pl-2 font-medium text-slate-600 flex items-center gap-1 truncate text-[11px]">
+               {row.v2 >= row.v1 ? <ArrowUpRight className="w-2.5 h-2.5 text-emerald-500" /> : <ArrowDownRight className="w-2.5 h-2.5 text-rose-500" />}
+               <span className="truncate">{row.label}</span>
+            </td>
+            <td className="py-1 text-right text-slate-500 font-mono text-[10px] px-1">{row.type === 'currency' ? `₹${(row.v1/100000).toFixed(1)}L` : row.v1.toLocaleString()}</td>
+            <td className="py-1 text-right text-slate-300 text-[8px] px-1">{row.sub1 || '-'}</td>
+            <td className="py-1 text-right font-bold text-slate-900 font-mono text-[10px] px-1 border-l border-slate-50/50">{row.type === 'currency' ? `₹${(row.v2/100000).toFixed(1)}L` : row.v2.toLocaleString()}</td>
+            <td className="py-1 text-right text-blue-600 font-bold text-[9px] px-1">{row.sub2 || '-'}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+    <div className="mt-auto pt-1.5 border-t border-slate-100 flex items-center justify-end px-1 text-[8px] text-slate-400 gap-1 font-bold uppercase">
+       <Database className="w-2 h-2" /> <span>SQL Sync: {updatedAt || 'N/A'}</span>
+    </div>
+  </div>
+);
 
 // --- MAIN APPLICATION ---
 export default function App() {
@@ -325,12 +442,18 @@ export default function App() {
         setSuccessMsg(`SQL Sync Successful: ${count} records saved.`);
         await loadCloudData(); 
       } else {
-        localStorage.setItem(`dashboard_${type}Data`, JSON.stringify(newData));
-        if (type === 'opportunities') setOppData(newData);
-        else if (type === 'leads') setLeadData(newData);
-        else if (type === 'inventory') setInvData(newData);
-        else if (type === 'bookings') setBookingData(newData);
-        setSuccessMsg(`Saved Locally: ${newData.length} records.`);
+        // For local storage, we also apply normalization to ensure keys match components
+        const mapped = newData.map(item => {
+           const row = {};
+           Object.keys(item).forEach(k => row[k.toLowerCase().replace(/[\s_().-]/g, '')] = item[k]);
+           return row;
+        });
+        localStorage.setItem(`dashboard_${type}Data`, JSON.stringify(mapped));
+        if (type === 'opportunities') setOppData(mapped);
+        else if (type === 'leads') setLeadData(mapped);
+        else if (type === 'inventory') setInvData(mapped);
+        else if (type === 'bookings') setBookingData(mapped);
+        setSuccessMsg(`Saved Locally: ${mapped.length} records.`);
       }
       setTimeout(() => setSuccessMsg(''), 5000);
     } catch (e) {
@@ -391,11 +514,13 @@ export default function App() {
 
   const inventoryStats = useMemo(() => {
     const total = filteredInvData.length;
-    // Handle Engine Code mapping correctly for bookings
+    // Map engine numbers from bookings cross-reference
     const bookedEngineSet = new Set(bookingData.map(b => getVal(b, ['enginenumber']).trim().toUpperCase()).filter(Boolean));
     const checkIsBooked = (d) => {
       const eng = getVal(d, ['enginenumber']).trim().toUpperCase();
-      return getVal(d, ['salesordernumber']) || getVal(d, ['gstinvoiceno']) || (eng && bookedEngineSet.has(eng));
+      const salesOrder = getVal(d, ['salesordernumber']).trim();
+      const gstInvoice = getVal(d, ['gstinvoiceno']).trim();
+      return !!salesOrder || !!gstInvoice || (eng && bookedEngineSet.has(eng));
     };
     const bookedCount = filteredInvData.filter(checkIsBooked).length;
     const openingStock = filteredInvData.filter(d => getMonthStr(getVal(d, ['grndate'])) !== timeLabels.currLabel && !checkIsBooked(d)).length;
