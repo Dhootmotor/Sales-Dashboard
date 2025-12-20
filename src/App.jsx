@@ -152,14 +152,12 @@ const uploadToSupabase = async (userId, tableName, data) => {
       data: item 
     };
 
-    // Primary keys based on schema provided in the SQL script
     if (tableName === 'opportunities') record.id = getVal(item, ['id', 'opportunityid']);
     if (tableName === 'leads') record.leadid = getVal(item, ['leadid', 'lead id']);
     if (tableName === 'inventory') record.vin = getVal(item, ['Vehicle Identification Number', 'vin']);
     
     return record;
   }).filter(r => {
-    // Basic validation: ensure primary keys exist for non-identity tables
     if (tableName === 'opportunities' && !r.id) return false;
     if (tableName === 'leads' && !r.leadid) return false;
     if (tableName === 'inventory' && !r.vin) return false;
@@ -175,6 +173,145 @@ const uploadToSupabase = async (userId, tableName, data) => {
   if (error) throw error;
   return data.length;
 };
+
+const mergeLocalData = (currentData, newData, type) => {
+  const getKey = (item) => {
+    if (type === 'opportunities') return getVal(item, ['id', 'opportunityid']);
+    if (type === 'leads') return getVal(item, ['leadid', 'lead id']);
+    if (type === 'inventory') return getVal(item, ['Vehicle Identification Number', 'vin']);
+    if (type === 'bookings') return getVal(item, ['Vehicle ID No.', 'VIN']);
+    return Math.random().toString();
+  };
+
+  const mergedMap = new Map((currentData || []).map(item => [getKey(item), item]));
+  newData.forEach(item => {
+    const key = getKey(item);
+    if (key) mergedMap.set(key, item);
+  });
+  return Array.from(mergedMap.values());
+};
+
+// --- COMPONENTS ---
+const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, storageStatus }) => {
+  const [file, setFile] = useState(null);
+  const [overwrite, setOverwrite] = useState(false);
+  
+  const handleFileChange = (e) => { if (e.target.files[0]) setFile(e.target.files[0]); };
+
+  const processFiles = async () => {
+    if (!file) return;
+    const readFile = (f) => new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve(parseCSV(e.target.result));
+      reader.readAsText(f);
+    });
+
+    try {
+      const { rows, rawHeaders } = await readFile(file);
+      const headerString = rawHeaders.join(',').toLowerCase();
+      let type = 'unknown';
+      if (headerString.includes('opportunity')) type = 'opportunities';
+      else if (headerString.includes('booking to delivery') || headerString.includes('model text 1')) type = 'bookings';
+      else if (headerString.includes('lead id')) type = 'leads';
+      else if (headerString.includes('vehicle identification number') || headerString.includes('vin')) type = 'inventory'; 
+
+      if (type === 'unknown') throw new Error("Could not detect CSV type based on headers.");
+
+      await onDataImported(rows, type, overwrite);
+      setFile(null);
+      onClose();
+    } catch (error) {
+      alert("Error: " + error.message);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center backdrop-blur-sm px-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-fade-in border border-slate-200">
+        <div className="bg-slate-900 px-5 py-3 flex justify-between items-center">
+          <h2 className="text-white font-bold text-sm flex items-center gap-2">
+            <Upload className="w-4 h-4 text-blue-400" />
+            Import Master Data
+          </h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
+        </div>
+        
+        <div className="p-5 space-y-4">
+          <div className="flex items-center gap-2 p-2 bg-blue-50 border border-blue-100 rounded-lg">
+             {storageStatus === 'cloud' ? <Cloud className="w-4 h-4 text-blue-600" /> : <HardDrive className="w-4 h-4 text-orange-600" />}
+             <span className="text-[10px] font-bold text-slate-700">
+                Target: {storageStatus === 'cloud' ? 'Supabase Cloud (Persistent)' : 'Local Browser Storage (Temporary)'}
+             </span>
+          </div>
+
+          <div className="border-2 border-dashed border-slate-200 rounded-xl p-8 hover:border-blue-500 transition-all bg-slate-50 relative group flex flex-col items-center justify-center text-center cursor-pointer">
+                <FileSpreadsheet className="w-8 h-8 text-blue-600 mb-2" /> 
+                <div className="text-slate-900 font-bold text-sm">{file ? file.name : "Select CSV to Upload"}</div>
+                <input type="file" accept=".csv" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onChange={handleFileChange} />
+          </div>
+
+          <div className="flex items-center gap-2 bg-slate-50 p-2 rounded-lg border border-slate-100">
+             <input type="checkbox" id="overwrite" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500" />
+             <label htmlFor="overwrite" className="text-[11px] font-bold text-slate-600 cursor-pointer">Overwrite Existing Data (Start Fresh)</label>
+          </div>
+        </div>
+
+        <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-200 rounded-lg">Cancel</button>
+          <button onClick={processFiles} disabled={isUploading || !file} className={`px-5 py-1.5 text-[11px] font-bold text-white rounded-lg transition-all ${isUploading || !file ? 'bg-slate-400' : 'bg-blue-600 hover:bg-blue-700'}`}>
+            {isUploading ? 'Importing...' : 'Sync System'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const ComparisonTable = ({ rows, headers, updatedAt }) => (
+  <div className="flex flex-col h-full overflow-hidden">
+    <table className="w-full text-xs text-left border-separate border-spacing-0">
+      <thead className="text-[9px] uppercase text-slate-400 bg-slate-50/50 font-bold tracking-wider sticky top-0">
+        <tr>
+          <th className="py-1 pl-2 w-[35%] border-b border-slate-100">Metric</th>
+          <th className="py-1 text-right w-[15%] px-1 border-l border-b border-slate-100/50">{headers[0] || 'Prv'}</th>
+          <th className="py-1 text-right w-[15%] px-1 text-slate-300 border-b border-slate-100">%</th>
+          <th className="py-1 text-right w-[15%] px-1 border-l border-b border-slate-100/50">{headers[1] || 'Cur'}</th>
+          <th className="py-1 text-right w-[15%] px-1 text-blue-400 border-b border-slate-100">%</th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-slate-50">
+        {(rows || []).map((row, idx) => {
+          const v1 = row.v1 || 0;
+          const v2 = row.v2 || 0;
+          const isUp = v2 >= v1;
+          const format = (val, type) => {
+             if (type === 'currency') return `₹${(val/100000).toFixed(1)}L`;
+             return val.toLocaleString();
+          };
+
+          return (
+            <tr key={idx} className="hover:bg-slate-50/80 transition-colors group">
+              <td className="py-1 pl-2 font-medium text-slate-600 flex items-center gap-1 truncate border-r border-slate-50/30">
+                 {isUp ? <ArrowUpRight className="w-2.5 h-2.5 text-emerald-500 shrink-0" /> : <ArrowDownRight className="w-2.5 h-2.5 text-rose-500 shrink-0" />}
+                 <span className="truncate text-[11px]" title={row.label}>{row.label}</span>
+              </td>
+              <td className="py-1 text-right text-slate-500 font-mono text-[10px] px-1">{format(v1, row.type)}</td>
+              <td className="py-1 text-right text-slate-300 text-[8px] px-1">{row.sub1 || '-'}</td>
+              <td className="py-1 text-right font-bold text-slate-900 font-mono text-[10px] px-1 border-l border-slate-50/50">{format(v2, row.type)}</td>
+              <td className="py-1 text-right text-blue-600 font-bold text-[9px] px-1">{row.sub2 || '-'}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+    <div className="mt-auto pt-1.5 border-t border-slate-100 flex items-center justify-end px-1 text-[8px] text-slate-800 gap-1 font-bold uppercase tracking-tighter">
+       <Clock className="w-2 h-2" />
+       <span>Refreshed: {updatedAt || 'Ready'}</span>
+    </div>
+  </div>
+);
 
 // --- MAIN APPLICATION ---
 export default function App() {
@@ -195,7 +332,7 @@ export default function App() {
     opportunities: null, leads: null, inventory: null, bookings: null
   });
 
-  // --- AUTH ---
+  // --- AUTH INITIALIZATION ---
   useEffect(() => {
     if (supabase) {
       const initAuth = async () => {
@@ -214,12 +351,19 @@ export default function App() {
         }
       };
       initAuth();
+      const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+        if (session?.user) {
+          setUser(session.user);
+          setStorageMode('cloud');
+        }
+      });
+      return () => subscription.unsubscribe();
     } else {
       setStorageMode('local');
     }
   }, []);
 
-  // --- FETCH DATA ---
+  // --- DATA LOADING ---
   useEffect(() => {
     if (storageMode === 'initializing') return;
 
@@ -227,14 +371,17 @@ export default function App() {
       const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       if (storageMode === 'cloud' && user) {
         try {
-          const fetch = async (table) => {
+          const fetchFromTable = async (table) => {
             const { data, error } = await supabase.from(table).select('data').eq('user_id', user.id);
             if (error) throw error;
-            return data.map(i => i.data);
+            return (data || []).map(item => item.data);
           };
 
           const [opps, leads, invs, bks] = await Promise.all([
-            fetch('opportunities'), fetch('leads'), fetch('inventory'), fetch('bookings')
+            fetchFromTable('opportunities'),
+            fetchFromTable('leads'),
+            fetchFromTable('inventory'),
+            fetchFromTable('bookings')
           ]);
 
           setOppData(opps); setLeadData(leads); setInvData(invs); setBookingData(bks);
@@ -244,11 +391,11 @@ export default function App() {
           setStorageMode('local');
         }
       } else if (storageMode === 'local') {
-        const load = (key) => JSON.parse(localStorage.getItem(`dashboard_${key}`) || '[]');
-        setOppData(load('oppData'));
-        setLeadData(load('leadData'));
-        setInvData(load('invData'));
-        setBookingData(load('bookingData'));
+        const loadLocal = (key) => JSON.parse(localStorage.getItem(`dashboard_${key}`) || '[]');
+        setOppData(loadLocal('oppData'));
+        setLeadData(loadLocal('leadData'));
+        setInvData(loadLocal('invData'));
+        setBookingData(loadLocal('bookingData'));
       }
     };
     loadData();
@@ -287,33 +434,31 @@ export default function App() {
     };
   }, [oppData, timeView]);
 
-  // --- ACTIONS ---
+  // --- ACTION HANDLERS ---
   const handleDataImport = async (newData, type, overwrite) => {
     setIsUploading(true);
     try {
       if (storageMode === 'cloud' && user) {
         if (overwrite) await supabase.from(type).delete().eq('user_id', user.id);
-        await uploadToSupabase(user.id, type, newData);
-        setSuccessMsg(`Cloud: Synced ${newData.length} records`);
+        const count = await uploadToSupabase(user.id, type, newData);
+        setSuccessMsg(`Cloud Sync Success: ${count} records`);
       } else {
         const current = overwrite ? [] : (type === 'opportunities' ? oppData : type === 'leads' ? leadData : type === 'inventory' ? invData : bookingData);
-        // Simple merge logic for local
-        const merged = [...current, ...newData]; 
+        const merged = mergeLocalData(current, newData, type);
         localStorage.setItem(`dashboard_${type}Data`, JSON.stringify(merged));
-        setSuccessMsg(`Local: Saved ${newData.length} records`);
+        setSuccessMsg(`Local Save Success: ${newData.length} records`);
       }
-      // Re-trigger reload
-      setStorageMode(prev => prev === 'cloud' ? 'cloud' : 'local'); 
+      setStorageMode(prev => prev === 'cloud' ? 'cloud' : 'local'); // Trigger reload
       setTimeout(() => setSuccessMsg(''), 5000);
     } catch (e) {
-      alert("Error: " + e.message);
+      alert("Sync Error: " + e.message);
     } finally {
       setIsUploading(false);
     }
   };
 
   const clearData = async () => {
-    if (window.confirm("System Reset?")) {
+    if (window.confirm("Perform System Reset? This will wipe all current data.")) {
       if (storageMode === 'cloud' && user) {
         await Promise.all(['opportunities', 'leads', 'inventory', 'bookings'].map(t => supabase.from(t).delete().eq('user_id', user.id)));
       }
@@ -322,9 +467,9 @@ export default function App() {
     }
   };
 
-  // --- FILTERING ---
+  // --- FILTER LOGIC ---
   const getFilteredData = (data, type) => {
-    return data.filter(item => {
+    return (data || []).filter(item => {
       if (type === 'inventory') {
         const m = getVal(item, ['modellinefe', 'Model Line', 'Model']).trim();
         return filters.model === 'All' || m === filters.model;
@@ -345,7 +490,105 @@ export default function App() {
   const modelOptions = useMemo(() => [...new Set([...oppData, ...invData].map(d => getVal(d, ['modellinefe', 'Model Line'])))].filter(Boolean).sort(), [oppData, invData]);
   const locationOptions = useMemo(() => [...new Set([...oppData, ...leadData].map(d => getVal(d, ['Dealer Code', 'city'])))].filter(Boolean).sort(), [oppData, leadData]);
 
-  // --- RENDER ---
+  // --- METRIC CALCULATIONS ---
+  const funnelStats = useMemo(() => {
+    if (!timeLabels.currLabel) return [];
+    const getMonthData = (label) => filteredOppData.filter(d => getMonthStr(getVal(d, ['createdon', 'createddate'])) === label);
+    const currData = getMonthData(timeLabels.currLabel);
+    const prevData = getMonthData(timeLabels.prevLabel);
+    const getMetrics = (data) => {
+      const inquiries = data.length;
+      const testDrives = data.filter(d => ['yes', 'completed', 'done'].includes((getVal(d, ['testdrivecompleted']) || '').toLowerCase())).length;
+      const hotLeads = data.filter(d => parseInt(getVal(d, ['opportunityofflinescore']) || '0') > 80).length;
+      const bookings = data.filter(d => (getVal(d, ['ordernumber']) || '').trim() !== '').length;
+      const retails = data.filter(d => (getVal(d, ['invoicedatev', 'GST Invoice No.']) || '').trim() !== '').length;
+      return { inquiries, testDrives, hotLeads, bookings, retails };
+    };
+    const c = getMetrics(currData);
+    const p = getMetrics(prevData);
+    const calcPct = (num, den) => den > 0 ? Math.round((num / den) * 100) + '%' : '0%';
+    return [
+      { label: 'Total Inquiries', v1: p.inquiries, sub1: '100%', v2: c.inquiries, sub2: '100%' },
+      { label: 'Test-drives Done', v1: p.testDrives, sub1: calcPct(p.testDrives, p.inquiries), v2: c.testDrives, sub2: calcPct(c.testDrives, c.inquiries) },
+      { label: 'Hot Lead Pool', v1: p.hotLeads, sub1: calcPct(p.hotLeads, p.inquiries), v2: c.hotLeads, sub2: calcPct(c.hotLeads, c.inquiries) },
+      { label: 'Booking Conv.', v1: p.bookings, sub1: calcPct(p.bookings, p.inquiries), v2: c.bookings, sub2: calcPct(c.bookings, c.inquiries) },
+      { label: 'Retail Conv.', v1: p.retails, sub1: calcPct(p.retails, p.inquiries), v2: c.retails, sub2: calcPct(c.retails, c.inquiries) },
+    ];
+  }, [filteredOppData, timeLabels]);
+
+  const inventoryStats = useMemo(() => {
+    const total = filteredInvData.length;
+    return [
+      { label: 'Total Inventory', v1: 0, v2: total },
+      { label: 'Available Stock', v1: 0, v2: total, sub2: '100%' },
+      { label: 'Pending PDI', v1: 0, v2: 0 },
+      { label: 'Allocated', v1: 0, v2: 0 },
+      { label: 'Ageing >90', v1: 0, v2: filteredInvData.filter(d => parseInt(getVal(d, ['Ageing Days']) || '0') > 90).length },
+    ];
+  }, [filteredInvData]);
+
+  const sourceStats = useMemo(() => {
+    const sourceDataset = filteredLeadData.length > 0 ? filteredLeadData : filteredOppData;
+    const currData = sourceDataset.filter(d => getMonthStr(getVal(d, ['createdon', 'createddate'])) === timeLabels.currLabel);
+    const counts = {};
+    currData.forEach(d => { const s = getVal(d, ['source']) || 'Other'; counts[s] = (counts[s] || 0) + 1; });
+    return Object.entries(counts).sort(([,a], [,b]) => b - a).slice(0, 5)
+      .map(([label, val]) => ({ label, v1: 0, v2: val, sub2: currData.length ? Math.round((val/currData.length)*100)+'%' : '0%' }));
+  }, [filteredLeadData, filteredOppData, timeLabels]);
+
+  // --- RENDERING ---
+  const DashboardView = () => (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 animate-fade-in">
+       <div className="bg-white rounded-lg card-shadow p-2 flex flex-col hover:border-blue-100 border border-transparent transition-all">
+          <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
+            <LayoutDashboard className="w-3 h-3 text-blue-600" />
+            <h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Sales Funnel</h3>
+          </div>
+          <ComparisonTable rows={funnelStats} headers={[timeLabels.prevLabel, timeLabels.currLabel]} updatedAt={timestamps.opportunities} />
+       </div>
+
+       <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
+          <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
+            <Car className="w-3 h-3 text-indigo-600" />
+            <h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">System Inventory</h3>
+          </div>
+          <ComparisonTable rows={inventoryStats} headers={['', 'Stock']} updatedAt={timestamps.inventory} />
+       </div>
+
+       <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
+          <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
+            <TrendingUp className="w-3 h-3 text-emerald-600" />
+            <h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Channels</h3>
+          </div>
+          <ComparisonTable rows={sourceStats.length ? sourceStats : [{label: 'No Data', v1:0, v2:0}]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} updatedAt={timestamps.leads} />
+       </div>
+
+       <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
+          <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
+            <FileSpreadsheet className="w-3 h-3 text-purple-600" />
+            <h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Value Added</h3>
+          </div>
+          <ComparisonTable rows={[{label: 'Finance Pen.', v1: 0, v2: 0}, {label: 'Insurance Pen.', v1: 0, v2: 0}, {label: 'Accessories', v1: 0, v2: 0, type: 'currency'}]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} />
+       </div>
+
+       <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
+          <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
+            <Users className="w-3 h-3 text-orange-600" />
+            <h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Sales Ops</h3>
+          </div>
+          <ComparisonTable rows={[{label: 'Monthly Bookings', v1: 0, v2: 0}, {label: 'Monthly Retails', v1: 0, v2: 0}]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} />
+       </div>
+
+       <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
+          <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
+            <DollarSign className="w-3 h-3 text-rose-600" />
+            <h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Efficiency</h3>
+          </div>
+          <ComparisonTable rows={[{label: 'Margin/Car', v1: 0, v2: 0, type: 'currency'}, {label: 'Total Margin', v1: 0, v2: 0, type: 'currency'}]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} />
+       </div>
+    </div>
+  );
+
   return (
     <div className="min-h-screen font-sans bg-slate-50">
       <GlobalStyles />
@@ -362,7 +605,7 @@ export default function App() {
             </div>
           </div>
           <div className="flex gap-2">
-            <button onClick={() => setShowImport(true)} className="bg-slate-900 text-white px-3 py-1 rounded text-[9px] font-bold flex items-center gap-1"><Upload className="w-3 h-3" /> IMPORT</button>
+            <button onClick={() => setShowImport(true)} className="bg-slate-900 text-white px-3 py-1 rounded text-[9px] font-bold flex items-center gap-1 hover:bg-slate-800"><Upload className="w-3 h-3" /> IMPORT</button>
             <button onClick={clearData} className="text-slate-300 hover:text-rose-500 transition-colors"><Trash2 className="w-4 h-4" /></button>
           </div>
         </div>
@@ -375,77 +618,10 @@ export default function App() {
       </header>
 
       <main className="max-w-[1400px] mx-auto p-3">
-        {successMsg && <div className="mb-3 p-2 bg-emerald-500 text-white text-[10px] font-bold rounded flex items-center gap-2 animate-fade-in"><CheckCircle className="w-3 h-3" /> {successMsg}</div>}
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {/* Example Funnel Card */}
-          <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
-            <div className="flex items-center justify-between mb-3 border-b border-slate-50 pb-2">
-               <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><LayoutDashboard className="w-3 h-3 text-blue-600" /> Sales Funnel</h3>
-               <div className="text-[8px] font-bold text-slate-300">MoM Growth</div>
-            </div>
-            <div className="space-y-3">
-               <div className="flex justify-between items-center">
-                  <span className="text-[11px] font-bold text-slate-600">Total Inquiries</span>
-                  <span className="text-xs font-black text-slate-900">{filteredOppData.length}</span>
-               </div>
-               <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                  <div className="bg-blue-600 h-full" style={{width: '100%'}}></div>
-               </div>
-            </div>
-          </div>
+        {successMsg && <div className="mb-3 p-2 bg-emerald-500 text-white text-[10px] font-bold rounded flex items-center gap-2 animate-fade-in shadow-sm"><CheckCircle className="w-3 h-3" /> {successMsg}</div>}
+        <DashboardView />
 
-          <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
-            <div className="flex items-center justify-between mb-3 border-b border-slate-50 pb-2">
-               <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><Car className="w-3 h-3 text-indigo-600" /> System Inventory</h3>
-               <div className="text-[8px] font-bold text-slate-300">Live Stock</div>
-            </div>
-            <div className="flex items-end justify-between">
-               <div>
-                  <div className="text-2xl font-black text-slate-900 tracking-tighter">{filteredInvData.length}</div>
-                  <div className="text-[9px] font-bold text-slate-400 uppercase">Vehicles On-hand</div>
-               </div>
-               <TrendingUp className="w-8 h-8 text-emerald-100" />
-            </div>
-          </div>
-        </div>
-
-        {showImport && (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-fade-in">
-              <div className="p-4 bg-slate-900 text-white flex justify-between items-center">
-                <h2 className="text-xs font-black uppercase tracking-widest flex items-center gap-2"><Database className="w-4 h-4 text-blue-400" /> Data Synchronizer</h2>
-                <button onClick={() => setShowImport(false)}><X className="w-5 h-5" /></button>
-              </div>
-              <div className="p-6">
-                <div className="border-2 border-dashed border-slate-200 rounded-xl p-10 text-center relative hover:border-blue-500 transition-colors">
-                   <FileSpreadsheet className="w-10 h-10 text-blue-500 mx-auto mb-2" />
-                   <p className="text-[11px] font-bold text-slate-500">Drop Sales Master CSV here</p>
-                   <input type="file" accept=".csv" className="absolute inset-0 opacity-0 cursor-pointer" onChange={async (e) => {
-                     const file = e.target.files[0];
-                     if (file) {
-                        const reader = new FileReader();
-                        reader.onload = async (ev) => {
-                          const { rows, rawHeaders } = parseCSV(ev.target.result);
-                          const headerStr = rawHeaders.join(',').toLowerCase();
-                          let type = 'unknown';
-                          if (headerStr.includes('opportunity')) type = 'opportunities';
-                          else if (headerStr.includes('lead id')) type = 'leads';
-                          else if (headerStr.includes('vin')) type = 'inventory';
-                          else if (headerStr.includes('booking')) type = 'bookings';
-
-                          if (type === 'unknown') return alert("Invalid CSV Structure");
-                          await handleDataImport(rows, type, true);
-                          setShowImport(false);
-                        };
-                        reader.readAsText(file);
-                     }
-                   }} />
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+        {showImport && <ImportWizard isOpen={showImport} onClose={() => setShowImport(false)} onDataImported={handleDataImport} isUploading={isUploading} storageStatus={storageMode} />}
       </main>
     </div>
   );
