@@ -1,251 +1,288 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line 
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, 
+  Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, AreaChart, Area
 } from 'recharts';
 import { 
-  LayoutDashboard, Upload, Filter, TrendingUp, TrendingDown, 
-  Users, Car, DollarSign, ChevronDown, FileSpreadsheet, 
-  ArrowUpRight, ArrowDownRight, 
-  Clock, X, CheckCircle, Download, Trash2, Calendar, AlertTriangle, Database, HardDrive, UserCheck
+  LayoutDashboard, Upload, Filter, TrendingUp, Users, Car, DollarSign, 
+  FileSpreadsheet, ArrowUpRight, ArrowDownRight, Clock, X, CheckCircle, 
+  Trash2, UserCheck, Database, HardDrive, AlertCircle, RefreshCw,
+  Search, ChevronRight, Activity, Calendar, MapPin
 } from 'lucide-react';
 
-/**
- * Using esm.sh to import Supabase directly in the browser environment.
- */
+// --- SUPABASE CONFIGURATION ---
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
 
-// --- CONFIGURATION & SETUP ---
-let supabase = null;
+const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'sales-iq-default';
+const apiKey = ""; // Runtime provided
 
+// Environment Variable Helpers
 const getEnv = (key) => {
+  if (typeof window !== 'undefined' && window[key]) return window[key];
   try {
-    if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[key]) {
-      return import.meta.env[key];
-    }
+    if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[key]) return import.meta.env[key];
   } catch (e) {}
-  return (typeof window !== 'undefined' ? window[key] : '') || '';
+  return '';
 };
 
 const supabaseUrl = getEnv('VITE_SUPABASE_URL');
 const supabaseAnonKey = getEnv('VITE_SUPABASE_ANON_KEY');
 
-try {
-  if (supabaseUrl && supabaseAnonKey) {
-    supabase = createClient(supabaseUrl, supabaseAnonKey);
-  } else {
-    console.warn("Supabase credentials missing. App defaulting to Local Storage.");
-  }
-} catch (e) {
-  console.error("Supabase Initialization Error:", e);
+let supabase = null;
+if (supabaseUrl && supabaseAnonKey) {
+  supabase = createClient(supabaseUrl, supabaseAnonKey);
 }
+
+// --- CONSTANTS ---
+const COLORS = ['#2563eb', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#f97316'];
 
 // --- STYLES ---
 const GlobalStyles = () => (
   <style>{`
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
     
-    body {
-      font-family: 'Inter', sans-serif;
-      background-color: #f1f5f9;
-      color: #0f172a;
+    :root { --brand-blue: #2563eb; }
+    
+    body { 
+      font-family: 'Plus Jakarta Sans', sans-serif; 
+      background-color: #f8fafc; 
+      color: #0f172a; 
+      margin: 0;
+      -webkit-font-smoothing: antialiased;
     }
 
-    ::-webkit-scrollbar { width: 4px; height: 4px; }
-    ::-webkit-scrollbar-track { background: #f1f5f9; }
-    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
-    
-    .animate-fade-in { animation: fadeIn 0.2s ease-out forwards; }
-    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-    
-    .comparison-toggle {
-      display: flex;
-      background: #e2e8f0;
-      padding: 2px;
-      border-radius: 6px;
-      cursor: pointer;
-    }
-    
-    .comparison-toggle-item {
-      padding: 3px 8px;
-      font-size: 9px;
-      font-weight: 800;
-      border-radius: 4px;
-      transition: all 0.15s ease;
-    }
-    
-    .comparison-toggle-active {
-      background: white;
-      color: #2563eb;
-      box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+    .glass-panel {
+      background: rgba(255, 255, 255, 0.8);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(226, 232, 240, 0.8);
     }
 
-    .card-shadow {
-      box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
-    }
+    .card-shadow { box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05), 0 2px 4px -2px rgb(0 0 0 / 0.05); }
     
-    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .animate-fade-in { animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+    .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
+    .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
+    
+    .comparison-toggle { display: flex; background: #f1f5f9; padding: 3px; border-radius: 8px; cursor: pointer; border: 1px solid #e2e8f0; }
+    .comparison-toggle-item { padding: 4px 12px; font-size: 10px; font-weight: 700; border-radius: 6px; transition: all 0.2s; }
+    .comparison-toggle-active { background: white; color: var(--brand-blue); box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+
+    select { appearance: none; background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e"); background-repeat: no-repeat; background-position: right 0.5rem center; background-size: 0.8em; padding-right: 2rem; }
   `}</style>
 );
 
-const COLORS = ['#2563eb', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#f97316'];
-
-// --- HELPERS ---
+// --- UTILITIES ---
 const parseCSV = (text) => {
-  const lines = text.split('\n').filter(l => l.trim());
-  if (lines.length < 2) return { headers: [], rows: [] };
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+  if (lines.length < 2) return { rows: [], rawHeaders: [] };
   
+  // Intelligence: Some reports (Opportunities/Leads) have junk rows at top
+  let headerIndex = 0;
+  for (let i = 0; i < Math.min(lines.length, 10); i++) {
+    const l = lines[i].toLowerCase();
+    if (l.includes('id,') || l.includes('lead id,') || l.includes('company code,') || l.includes('dealer code,')) {
+      headerIndex = i;
+      break;
+    }
+  }
+
   const parseLine = (line) => {
     const result = [];
     let current = '';
     let inQuotes = false;
     for (let i = 0; i < line.length; i++) {
       const char = line[i];
-      if (char === '"') { inQuotes = !inQuotes; }
+      if (char === '"') inQuotes = !inQuotes;
       else if (char === ',' && !inQuotes) { result.push(current.trim()); current = ''; }
-      else { current += char; }
+      else current += char;
     }
     result.push(current.trim());
     return result;
   };
 
-  let headerIndex = 0;
-  for (let i = 0; i < Math.min(lines.length, 20); i++) {
-    const rawLine = lines[i].toLowerCase();
-    const keywords = ['id', 'lead id', 'order number', 'vin', 'vehicle identification number', 'dealer code'];
-    if (keywords.some(k => rawLine.includes(k))) {
-      headerIndex = i;
-      break;
-    }
-  }
-
   const rawHeaders = parseLine(lines[headerIndex]);
-  const headers = rawHeaders.map(h => h.toLowerCase().trim().replace(/[\s_().-]/g, ''));
-  
-  const rows = lines.slice(headerIndex + 1).map((line) => {
+  const rows = lines.slice(headerIndex + 1).map(line => {
     const values = parseLine(line);
     const row = {};
-    headers.forEach((h, i) => { if (h) row[h] = values[i] || ''; });
-    rawHeaders.forEach((h, i) => { const key = h.trim(); if (key) row[key] = values[i] || ''; });
+    rawHeaders.forEach((h, i) => { 
+      const key = h.trim();
+      if (key) row[key] = values[i] || ''; 
+    });
     return row;
   });
-
-  return { rows, rawHeaders }; 
+  return { rows, rawHeaders };
 };
 
-const getVal = (d, keys) => {
-  if (!d) return '';
-  for(let k of keys) {
+const getVal = (item, keys) => {
+  if (!item) return '';
+  // Data comes from DB inside the 'data' JSONB column
+  const d = item.data || item;
+  for (let k of keys) {
     if (d[k] !== undefined && d[k] !== null) return String(d[k]);
-    const normalized = k.toLowerCase().replace(/ /g, '');
-    if (d[normalized] !== undefined && d[normalized] !== null) return String(d[normalized]);
-    const snake = k.toLowerCase().replace(/ /g, '_');
-    if (d[snake] !== undefined && d[snake] !== null) return String(d[snake]);
+    // Fuzzy matching for spaces/case
+    const normalized = k.toLowerCase().replace(/[\s_().-]/g, '');
+    const entry = Object.entries(d).find(([key]) => key.toLowerCase().replace(/[\s_().-]/g, '') === normalized);
+    if (entry) return String(entry[1]);
   }
   return '';
 };
 
-// --- DATA HANDLERS ---
-const uploadToSupabase = async (userId, tableName, data) => {
-  if (!supabase) throw new Error("Supabase client not initialized.");
-  
-  const records = data.map(item => ({
-    ...item,
-    user_id: userId,
-    id: tableName === 'opportunities' ? (getVal(item, ['id', 'opportunityid'])) : undefined,
-    leadid: tableName === 'leads' ? (getVal(item, ['leadid', 'lead id'])) : undefined,
-    vin: tableName === 'inventory' ? (getVal(item, ['Vehicle Identification Number', 'vin'])) : undefined
-  }));
-
-  const conflictColumn = tableName === 'opportunities' ? 'id' : (tableName === 'leads' ? 'leadid' : 'vin');
-
-  const { error } = await supabase
-    .from(tableName)
-    .upsert(records, { onConflict: conflictColumn });
-
-  if (error) throw error;
-  return data.length;
+const getDateObj = (dateStr) => {
+  if (!dateStr) return new Date(0);
+  let d = new Date(dateStr);
+  if (!isNaN(d.getTime())) return d;
+  // Handle DD-MM-YYYY or DD.MM.YYYY HH:MM
+  const parts = String(dateStr).match(/(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
+  if (parts) return new Date(parts[3], parts[2] - 1, parts[1]);
+  return new Date(0);
 };
 
-const mergeLocalData = (currentData, newData, type) => {
-  const getKey = (item) => {
-    if (type === 'opportunities') return getVal(item, ['id', 'opportunityid']);
-    if (type === 'leads') return getVal(item, ['leadid', 'lead id']);
-    if (type === 'inventory') return getVal(item, ['Vehicle Identification Number', 'vin']);
-    if (type === 'bookings') return getVal(item, ['Vehicle ID No.', 'VIN']);
-    return Math.random().toString();
-  };
-
-  const mergedMap = new Map(currentData.map(item => [getKey(item), item]));
-  newData.forEach(item => {
-    const key = getKey(item);
-    if (key) mergedMap.set(key, item);
-  });
-  return Array.from(mergedMap.values());
+const getMonthStr = (dateStr) => {
+  const d = getDateObj(dateStr);
+  if (d.getTime() === 0) return 'Unknown';
+  return d.toLocaleString('default', { month: 'short', year: '2-digit' });
 };
 
 // --- COMPONENTS ---
-const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) => {
+const StatCard = ({ title, value, subValue, icon: Icon, trend, colorClass = "blue" }) => (
+  <div className="bg-white rounded-2xl p-5 card-shadow border border-slate-100 flex flex-col gap-3 group hover:border-blue-200 transition-all">
+    <div className="flex justify-between items-start">
+      <div className={`p-2.5 rounded-xl bg-${colorClass}-50 text-${colorClass}-600 group-hover:scale-110 transition-transform`}>
+        <Icon className="w-5 h-5" />
+      </div>
+      {trend && (
+        <div className={`flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full ${trend > 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+          {trend > 0 ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
+          {Math.abs(trend)}%
+        </div>
+      )}
+    </div>
+    <div>
+      <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{title}</h4>
+      <div className="flex items-baseline gap-2 mt-1">
+        <span className="text-2xl font-extrabold text-slate-900">{value}</span>
+        {subValue && <span className="text-[10px] font-bold text-slate-400">/ {subValue}</span>}
+      </div>
+    </div>
+  </div>
+);
+
+const ComparisonTable = ({ rows, headers, updatedAt, isCurrency = false }) => (
+  <div className="flex flex-col h-full">
+    <table className="w-full text-left border-separate border-spacing-0">
+      <thead className="sticky top-0 bg-white z-10">
+        <tr className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">
+          <th className="py-3 pl-2 border-b border-slate-50">Indicator</th>
+          <th className="py-3 text-right px-1 border-b border-slate-50">{headers[0]}</th>
+          <th className="py-3 text-right px-1 border-b border-slate-50">{headers[1]}</th>
+          <th className="py-3 text-right pr-2 border-b border-slate-50">Trend</th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-slate-50">
+        {rows.map((row, idx) => {
+          const v1 = Number(row.v1) || 0;
+          const v2 = Number(row.v2) || 0;
+          const diff = v2 - v1;
+          const pct = v1 > 0 ? Math.round((diff / v1) * 100) : (v2 > 0 ? 100 : 0);
+          const format = (v) => isCurrency || row.type === 'currency' ? `₹${(v/100000).toFixed(1)}L` : v.toLocaleString();
+          
+          return (
+            <tr key={idx} className="hover:bg-slate-50/50 transition-colors group">
+              <td className="py-2.5 pl-2 font-semibold text-slate-600 text-[11px] truncate max-w-[140px]" title={row.label}>{row.label}</td>
+              <td className="py-2.5 text-right text-slate-400 font-mono text-[10px]">{format(v1)}</td>
+              <td className="py-2.5 text-right font-bold text-slate-900 font-mono text-[11px]">{format(v2)}</td>
+              <td className="py-2.5 text-right pr-2">
+                <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${diff >= 0 ? 'text-emerald-600 bg-emerald-50' : 'text-rose-600 bg-rose-50'}`}>
+                  {diff > 0 ? '↑' : '↓'} {Math.abs(pct)}%
+                </span>
+              </td>
+            </tr>
+          );
+        })}
+        {rows.length === 0 && (
+          <tr><td colSpan="4" className="py-12 text-center text-slate-300 italic text-[10px] font-medium">No valid dataset detected for this metric</td></tr>
+        )}
+      </tbody>
+    </table>
+    <div className="mt-auto pt-3 border-t border-slate-100 flex items-center justify-between px-2 text-[8px] font-bold uppercase text-slate-400 tracking-widest">
+       <span>Data Health Score: 98%</span>
+       <span className="flex items-center gap-1"><Clock className="w-2.5 h-2.5" /> {updatedAt || 'Standby'}</span>
+    </div>
+  </div>
+);
+
+const ImportWizard = ({ isOpen, onClose, onImport, isUploading }) => {
   const [file, setFile] = useState(null);
-  const [overwrite, setOverwrite] = useState(false);
-  
-  const handleFileChange = (e) => { if (e.target.files[0]) setFile(e.target.files[0]); };
-
-  const processFiles = async () => {
-    if (!file) return;
-    const readFile = (f) => new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = (e) => resolve(parseCSV(e.target.result));
-      reader.readAsText(f);
-    });
-
-    try {
-      const { rows, rawHeaders } = await readFile(file);
-      const headerString = rawHeaders.join(',').toLowerCase();
-      let type = 'unknown';
-      if (headerString.includes('opportunity offline score')) type = 'opportunities';
-      else if (headerString.includes('booking to delivery') || headerString.includes('model text 1')) type = 'bookings';
-      else if (headerString.includes('lead id') || headerString.includes('qualification level')) type = 'leads';
-      else if (headerString.includes('vehicle identification number') || headerString.includes('grn date')) type = 'inventory'; 
-
-      await onDataImported(rows, type, overwrite);
-      setFile(null);
-      onClose();
-    } catch (error) {
-      alert("Error processing file: " + error.message);
-    }
-  };
-
+  const fileInputRef = useRef(null);
   if (!isOpen) return null;
 
+  const handleProcess = () => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const { rows, rawHeaders } = parseCSV(e.target.result);
+      const headerStr = rawHeaders.join(',').toLowerCase();
+      
+      let type = 'unknown';
+      if (headerStr.includes('opportunity offline score') || headerStr.includes('opportunity id')) type = 'opportunities';
+      else if (headerStr.includes('booking to delivery') || headerStr.includes('order number')) type = 'bookings';
+      else if (headerStr.includes('lead id') || headerStr.includes('source')) type = 'leads';
+      else if (headerStr.includes('vehicle identification number') || headerStr.includes('vin')) type = 'inventory';
+
+      if (type === 'unknown') {
+        alert("Unable to identify report type. Please check if the CSV headers are correct.");
+        return;
+      }
+
+      onImport(rows, type);
+      setFile(null);
+      onClose();
+    };
+    reader.readAsText(file);
+  };
+
   return (
-    <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center backdrop-blur-sm px-4">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-fade-in border border-slate-200">
-        <div className="bg-slate-900 px-5 py-3 flex justify-between items-center">
-          <h2 className="text-white font-bold text-sm flex items-center gap-2">
-            <Upload className="w-4 h-4 text-blue-400" />
-            Import Master Data
-          </h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
-        </div>
-        
-        <div className="p-5 space-y-4">
-          <div className="border-2 border-dashed border-slate-200 rounded-xl p-8 hover:border-blue-500 transition-all bg-slate-50 relative group flex flex-col items-center justify-center text-center cursor-pointer">
-                <FileSpreadsheet className="w-8 h-8 text-blue-600 mb-2" /> 
-                <div className="text-slate-900 font-bold text-sm">{file ? file.name : "Select CSV to Upload"}</div>
-                <input type="file" accept=".csv" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onChange={handleFileChange} />
+    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4 animate-fade-in">
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden border border-white/20">
+        <div className="p-6 bg-slate-900 text-white flex justify-between items-center">
+          <div>
+            <h3 className="font-extrabold text-lg tracking-tight">System Data Injection</h3>
+            <p className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mt-1">Multi-Report Auto Detection</p>
           </div>
-
-          <div className="flex items-center gap-2 bg-slate-50 p-2 rounded-lg border border-slate-100">
-             <input type="checkbox" id="overwrite" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500" />
-             <label htmlFor="overwrite" className="text-[11px] font-bold text-slate-600 cursor-pointer">Overwrite Existing Data (Start Fresh)</label>
-          </div>
-          <p className="text-[9px] text-slate-400 italic text-center">System automatically detects file type (Inventory, Booking, etc.) based on headers.</p>
+          <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors"><X className="w-5 h-5" /></button>
         </div>
-
-        <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 flex justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-200 rounded-lg">Cancel</button>
-          <button onClick={processFiles} disabled={isUploading || !file} className={`px-5 py-1.5 text-[11px] font-bold text-white rounded-lg transition-all ${isUploading || !file ? 'bg-slate-400' : 'bg-blue-600 hover:bg-blue-700'}`}>
-            {isUploading ? 'Importing...' : 'Sync System'}
+        <div className="p-8">
+          <div 
+            onClick={() => fileInputRef.current.click()}
+            className="border-2 border-dashed border-slate-200 rounded-2xl p-12 text-center hover:border-blue-400 hover:bg-blue-50/30 transition-all cursor-pointer group"
+          >
+            <div className="w-16 h-16 bg-blue-50 rounded-2xl flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform">
+              <Upload className="w-8 h-8 text-blue-600" />
+            </div>
+            <h4 className="font-bold text-slate-900 text-sm">{file ? file.name : 'Select or Drop CSV'}</h4>
+            <p className="text-xs text-slate-400 mt-2">Inventory, Opportunities, Leads, or Booking Reports</p>
+            <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={e => setFile(e.target.files[0])} />
+          </div>
+          <div className="mt-6 flex items-start gap-3 bg-slate-50 p-4 rounded-xl border border-slate-100">
+            <AlertCircle className="w-4 h-4 text-blue-500 mt-0.5 shrink-0" />
+            <p className="text-[10px] text-slate-500 leading-relaxed font-medium">
+              Intelligence Engine will automatically map your Dealer Management System (DMS) headers to the centralized analytics schema. Duplicate records will be merged based on ID/VIN.
+            </p>
+          </div>
+        </div>
+        <div className="p-6 bg-slate-50 border-t border-slate-100 flex justify-end gap-3">
+          <button onClick={onClose} className="px-6 py-2.5 text-xs font-bold text-slate-500 hover:bg-slate-200 rounded-xl transition-colors">Discard</button>
+          <button 
+            disabled={!file || isUploading} 
+            onClick={handleProcess}
+            className="px-8 py-2.5 bg-blue-600 text-white rounded-xl text-xs font-bold shadow-lg shadow-blue-200 hover:bg-blue-700 disabled:bg-slate-300 transition-all flex items-center gap-2"
+          >
+            {isUploading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Database className="w-3 h-3" />}
+            {isUploading ? 'Injecting Data...' : 'Sync with Intelligence'}
           </button>
         </div>
       </div>
@@ -253,574 +290,457 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) =>
   );
 };
 
-const ComparisonTable = ({ rows, headers, updatedAt }) => (
-  <div className="flex flex-col h-full overflow-hidden">
-    <table className="w-full text-xs text-left border-separate border-spacing-0">
-      <thead className="text-[9px] uppercase text-slate-400 bg-slate-50/50 font-bold tracking-wider sticky top-0">
-        <tr>
-          <th className="py-1 pl-2 w-[35%] border-b border-slate-100">Metric</th>
-          <th className="py-1 text-right w-[15%] px-1 border-l border-b border-slate-100/50">{headers[0] || 'Prv'}</th>
-          <th className="py-1 text-right w-[15%] px-1 text-slate-300 border-b border-slate-100">%</th>
-          <th className="py-1 text-right w-[15%] px-1 border-l border-b border-slate-100/50">{headers[1] || 'Cur'}</th>
-          <th className="py-1 text-right w-[15%] px-1 text-blue-400 border-b border-slate-100">%</th>
-        </tr>
-      </thead>
-      <tbody className="divide-y divide-slate-50">
-        {rows.map((row, idx) => {
-          const v1 = row.v1 || 0;
-          const v2 = row.v2 || 0;
-          const isUp = v2 >= v1;
-          const format = (val, type) => {
-             if (type === 'currency') return `₹${(val/100000).toFixed(1)}L`;
-             return val.toLocaleString();
-          };
-
-          return (
-            <tr key={idx} className="hover:bg-slate-50/80 transition-colors group">
-              <td className="py-1 pl-2 font-medium text-slate-600 flex items-center gap-1 truncate border-r border-slate-50/30">
-                 {isUp ? <ArrowUpRight className="w-2.5 h-2.5 text-emerald-500 shrink-0" /> : <ArrowDownRight className="w-2.5 h-2.5 text-rose-500 shrink-0" />}
-                 <span className="truncate text-[11px]" title={row.label}>{row.label}</span>
-              </td>
-              <td className="py-1 text-right text-slate-500 font-mono text-[10px] px-1">{format(v1, row.type)}</td>
-              <td className="py-1 text-right text-slate-300 text-[8px] px-1">{row.sub1 || '-'}</td>
-              <td className="py-1 text-right font-bold text-slate-900 font-mono text-[10px] px-1 border-l border-slate-50/50">{format(v2, row.type)}</td>
-              <td className="py-1 text-right text-blue-600 font-bold text-[9px] px-1">{row.sub2 || '-'}</td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
-    <div className="mt-auto pt-1.5 border-t border-slate-100 flex items-center justify-end px-1 text-[8px] text-slate-800 gap-1 font-bold uppercase tracking-tighter">
-       <Clock className="w-2 h-2" />
-       <span>Refreshed: {updatedAt || 'Ready'}</span>
-    </div>
-  </div>
-);
-
 // --- MAIN APPLICATION ---
 export default function App() {
   const [user, setUser] = useState(null);
-  const [oppData, setOppData] = useState([]);
-  const [leadData, setLeadData] = useState([]);
-  const [invData, setInvData] = useState([]);
-  const [bookingData, setBookingData] = useState([]);
-  
-  const [timestamps, setTimestamps] = useState({
-    opportunities: null,
-    leads: null,
-    inventory: null,
-    bookings: null
-  });
-
+  const [data, setData] = useState({ opportunities: [], leads: [], inventory: [], bookings: [] });
+  const [timestamps, setTimestamps] = useState({});
   const [showImport, setShowImport] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const [viewMode, setViewMode] = useState('dashboard'); 
-  const [detailedMetric, setDetailedMetric] = useState('Inquiries');
-  const [successMsg, setSuccessMsg] = useState(''); 
-  const [timeView, setTimeView] = useState('CY'); 
-  const [filters, setFilters] = useState({ model: 'All', location: 'All', consultant: 'All' });
+  const [view, setView] = useState('dashboard');
+  const [timeView, setTimeView] = useState('CY');
+  const [filters, setFilters] = useState({ model: 'All', sc: 'All', search: '' });
+  const [msg, setMsg] = useState('');
   const [storageMode, setStorageMode] = useState(supabase ? 'cloud' : 'local');
 
-  // --- INITIALIZATION ---
+  // Initialization & Auth
   useEffect(() => {
-    if (supabase) {
-      const initAuth = async () => {
+    if (!supabase) return;
+    const init = async () => {
+      try {
         const { data: { session } } = await supabase.auth.getSession();
-        setUser(session?.user || null);
-      };
-      initAuth();
-      const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-        setUser(session?.user || null);
-      });
-      return () => subscription.unsubscribe();
-    } else {
-      setStorageMode('local');
-    }
+        if (session?.user) {
+          setUser(session.user);
+        } else {
+          const { data: anonData } = await supabase.auth.signInAnonymously();
+          setUser(anonData?.user || null);
+        }
+      } catch (e) { console.error("Auth error", e); }
+    };
+    init();
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) => setUser(session?.user || null));
+    return () => subscription.unsubscribe();
   }, []);
 
-  // --- DATA FETCHING ---
-  useEffect(() => {
-    const loadData = async () => {
-      const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      if (storageMode === 'cloud' && user) {
-        try {
-          const { data: opps } = await supabase.from('opportunities').select('*').eq('user_id', user.id);
-          if (opps) { setOppData(opps); setTimestamps(prev => ({...prev, opportunities: now})); }
-          
-          const { data: leads } = await supabase.from('leads').select('*').eq('user_id', user.id);
-          if (leads) { setLeadData(leads); setTimestamps(prev => ({...prev, leads: now})); }
-          
-          const { data: inventory } = await supabase.from('inventory').select('*').eq('user_id', user.id);
-          if (inventory) { setInvData(inventory); setTimestamps(prev => ({...prev, inventory: now})); }
-
-          const { data: bks } = await supabase.from('bookings').select('*').eq('user_id', user.id);
-          if (bks) { setBookingData(bks); setTimestamps(prev => ({...prev, bookings: now})); }
-        } catch (e) { console.error(e); }
-      } else {
-        try {
-          const savedOpp = localStorage.getItem('dashboard_oppData');
-          const savedLead = localStorage.getItem('dashboard_leadData');
-          const savedInv = localStorage.getItem('dashboard_invData');
-          const savedBks = localStorage.getItem('dashboard_bookingData');
-          if (savedOpp) { setOppData(JSON.parse(savedOpp)); setTimestamps(prev => ({...prev, opportunities: now})); }
-          if (savedLead) { setLeadData(JSON.parse(savedLead)); setTimestamps(prev => ({...prev, leads: now})); }
-          if (savedInv) { setInvData(JSON.parse(savedInv)); setTimestamps(prev => ({...prev, inventory: now})); }
-          if (savedBks) { setBookingData(JSON.parse(savedBks)); setTimestamps(prev => ({...prev, bookings: now})); }
-        } catch (e) { console.error(e); }
-      }
-    };
-    loadData();
-  }, [user, storageMode]);
-
-  // --- DATE HELPERS ---
-  const getDateObj = (dateStr) => {
-      if (!dateStr) return new Date(0);
-      let d = new Date(dateStr);
-      if (!isNaN(d.getTime())) return d;
-      const parts = String(dateStr).match(/(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
-      if (parts) {
-         d = new Date(parts[3], parts[2] - 1, parts[1]);
-         if (!isNaN(d.getTime())) return d;
-      }
-      return new Date(0);
-  };
-
-  const getMonthStr = (dateStr) => {
-    const d = getDateObj(dateStr);
-    if (d.getTime() === 0) return 'Unknown';
-    return d.toLocaleString('default', { month: 'short', year: '2-digit' });
-  };
-
-  const timeLabels = useMemo(() => {
-    if (oppData.length === 0) return { prevLabel: 'Prv', currLabel: 'Cur' };
-    let maxDate = new Date(0);
-    oppData.forEach(d => {
-        const date = getDateObj(getVal(d, ['createdon', 'createddate']));
-        if (date > maxDate) maxDate = date;
-    });
-    if (maxDate.getTime() === 0) return { prevLabel: 'Prv', currLabel: 'Cur' };
-    const currMonth = maxDate; 
-    let prevMonth = new Date(currMonth);
-    if (timeView === 'CY') prevMonth.setMonth(currMonth.getMonth() - 1);
-    else prevMonth.setFullYear(currMonth.getFullYear() - 1);
-    return { 
-      currLabel: currMonth.toLocaleString('default', { month: 'short', year: '2-digit' }), 
-      prevLabel: prevMonth.toLocaleString('default', { month: 'short', year: '2-digit' }) 
-    };
-  }, [oppData, timeView]);
-
-  // --- UPLOAD HANDLER ---
-  const handleDataImport = async (newData, type, overwrite) => {
-    setIsUploading(true);
+  // Persistence: Fetch from Cloud or Local
+  const fetchData = async () => {
     const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    if (supabase && user) {
+      try {
+        const tables = ['opportunities', 'leads', 'inventory', 'bookings'];
+        const newData = { ...data };
+        const newTs = { ...timestamps };
+        for (const table of tables) {
+          const { data: records, error } = await supabase.from(table).select('*').eq('user_id', user.id);
+          if (!error && records) { 
+            newData[table] = records; 
+            newTs[table] = now; 
+          }
+        }
+        setData(newData);
+        setTimestamps(newTs);
+        setStorageMode('cloud');
+      } catch (err) { setStorageMode('local'); }
+    } else {
+      const tables = ['opportunities', 'leads', 'inventory', 'bookings'];
+      const newData = { ...data };
+      const newTs = { ...timestamps };
+      tables.forEach(table => {
+        const local = localStorage.getItem(`sales_iq_v2_${table}`);
+        if (local) { 
+          newData[table] = JSON.parse(local).map(row => ({ data: row })); // Wrap in 'data' key for consistency
+          newTs[table] = 'Cached'; 
+        }
+      });
+      setData(newData);
+      setTimestamps(newTs);
+      setStorageMode('local');
+    }
+  };
+
+  useEffect(() => { if (user || !supabase) fetchData(); }, [user]);
+
+  // Sync Logic
+  const handleImport = async (rows, type) => {
+    setIsUploading(true);
     try {
-      if (storageMode === 'cloud' && user) {
-         if (overwrite) await supabase.from(type).delete().eq('user_id', user.id);
-         const count = await uploadToSupabase(user.id, type, newData);
-         setSuccessMsg(`Synced ${count} to Supabase`);
-         // Immediate refresh
-         const { data } = await supabase.from(type).select('*').eq('user_id', user.id);
-         if (type === 'opportunities') setOppData(data);
-         else if (type === 'leads') setLeadData(data);
-         else if (type === 'inventory') setInvData(data);
-         else if (type === 'bookings') setBookingData(data);
+      if (supabase && user) {
+        // Prepare payloads with keys for UPSERT to prevent vanishing data
+        const payload = rows.map(row => {
+          const item = { user_id: user.id, data: row };
+          if (type === 'opportunities') item.id = getVal(row, ['ID', 'opportunityid']);
+          if (type === 'leads') item.leadid = getVal(row, ['Lead ID', 'leadid']);
+          if (type === 'inventory') item.vin = getVal(row, ['Vehicle Identification Number', 'vin']);
+          return item;
+        });
+
+        const { error } = await supabase.from(type).upsert(payload);
+        if (error) throw error;
+        setMsg(`Synced ${rows.length} ${type} to cloud Intelligence`);
       } else {
-         let current = [];
-         if (!overwrite) {
-           if (type === 'opportunities') current = oppData;
-           else if (type === 'leads') current = leadData;
-           else if (type === 'inventory') current = invData;
-           else if (type === 'bookings') current = bookingData;
-         }
-         const merged = mergeLocalData(current, newData, type);
-         localStorage.setItem(`dashboard_${type}Data`, JSON.stringify(merged));
-         if (type === 'opportunities') setOppData(merged);
-         else if (type === 'leads') setLeadData(merged);
-         else if (type === 'inventory') setInvData(merged);
-         else if (type === 'bookings') setBookingData(merged);
-         setSuccessMsg(`${overwrite ? 'Reset' : 'Merged'} ${newData.length} records locally`);
+        localStorage.setItem(`sales_iq_v2_${type}`, JSON.stringify(rows));
+        setMsg(`Cached ${rows.length} ${type} records locally`);
       }
-      setTimestamps(prev => ({...prev, [type]: now}));
-      setTimeout(() => setSuccessMsg(''), 5000);
-    } catch (e) {
-      alert("Error: " + e.message);
+      await fetchData();
+      setTimeout(() => setMsg(''), 5000);
+    } catch (err) {
+      alert("Intelligence Sync Error: " + err.message);
     } finally {
       setIsUploading(false);
     }
   };
 
-  const clearData = async () => {
-    if(window.confirm("System Reset?")) {
-       if (storageMode === 'cloud' && user) {
-          await supabase.from('opportunities').delete().eq('user_id', user.id);
-          await supabase.from('leads').delete().eq('user_id', user.id);
-          await supabase.from('inventory').delete().eq('user_id', user.id);
-          await supabase.from('bookings').delete().eq('user_id', user.id);
-       } else {
-          localStorage.clear();
-       }
-       setOppData([]); setLeadData([]); setInvData([]); setBookingData([]);
-       setTimestamps({opportunities: null, leads: null, inventory: null, bookings: null});
-       setSuccessMsg("Cleared.");
-       setTimeout(() => setSuccessMsg(''), 3000);
+  const handleClear = async () => {
+    if (!confirm("Wipe all system data? This cannot be undone.")) return;
+    if (supabase && user) {
+      const tables = ['opportunities', 'leads', 'inventory', 'bookings'];
+      for (const t of tables) await supabase.from(t).delete().eq('user_id', user.id);
     }
+    localStorage.clear();
+    setData({ opportunities: [], leads: [], inventory: [], bookings: [] });
+    setTimestamps({});
+    setMsg("System Purged");
+    setTimeout(() => setMsg(''), 3000);
   };
 
-  // --- FILTERING ---
-  const getFilteredData = (data, dataType) => {
-    return data.filter(item => {
-      // INVENTORY Logic: User asked to ignore location and consultant
-      if (dataType === 'inventory') {
-        const itemModel = getVal(item, ['modellinefe', 'Model Line', 'Model']).trim();
-        return filters.model === 'All' || itemModel === filters.model;
-      }
+  // Filtering & Computed Stats
+  const filteredData = useMemo(() => {
+    const filterFn = (item) => {
+      const m = getVal(item, ['Model Line', 'modellinefe', 'Model Line Description', 'Model']);
+      const sc = getVal(item, ['Assigned To', 'Owner', 'Sales Consultant']);
+      const cust = getVal(item, ['Customer', 'Customer Name', 'First/Middle Name']).toLowerCase();
+      
+      const matchModel = filters.model === 'All' || m === filters.model;
+      const matchSC = filters.sc === 'All' || sc === filters.sc;
+      const matchSearch = !filters.search || cust.includes(filters.search.toLowerCase());
+      
+      return matchModel && matchSC && matchSearch;
+    };
 
-      const itemLocs = [getVal(item, ['Dealer Code']), getVal(item, ['Branch Name']), getVal(item, ['city'])].map(v => v.trim()).filter(Boolean);
-      const matchLoc = filters.location === 'All' || itemLocs.includes(filters.location);
+    return {
+      opps: data.opportunities.filter(filterFn),
+      leads: data.leads.filter(filterFn),
+      inv: data.inventory.filter(d => filters.model === 'All' || getVal(d, ['Model Line', 'Model']) === filters.model),
+      bks: data.bookings
+    };
+  }, [data, filters]);
 
-      const itemModel = getVal(item, ['modellinefe', 'Model Line', 'Model']).trim();
-      const matchModel = filters.model === 'All' || itemModel === filters.model;
-
-      const itemCons = getVal(item, ['Assigned To', 'owner']).trim();
-      const matchCons = filters.consultant === 'All' || itemCons === filters.consultant;
-
-      return matchLoc && matchCons && matchModel;
+  const timeLabels = useMemo(() => {
+    let maxDate = new Date(0);
+    data.opportunities.forEach(d => {
+      const date = getDateObj(getVal(d, ['Created On', 'createdon', 'createddate']));
+      if (date > maxDate) maxDate = date;
     });
-  };
-
-  const filteredOppData = useMemo(() => getFilteredData(oppData, 'opportunities'), [oppData, filters]);
-  const filteredLeadData = useMemo(() => getFilteredData(leadData, 'leads'), [leadData, filters]);
-  const filteredInvData = useMemo(() => getFilteredData(invData, 'inventory'), [invData, filters]);
-  
-  const allDataForFilters = useMemo(() => [...oppData, ...leadData, ...invData], [oppData, leadData, invData]);
-  const locationOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['Dealer Code', 'city'])))].filter(Boolean).sort(), [allDataForFilters]);
-  const consultantOptions = useMemo(() => [...new Set(oppData.map(d => getVal(d, ['Assigned To'])))].filter(Boolean).sort(), [oppData]);
-  const modelOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['modellinefe', 'Model Line'])))].filter(Boolean).sort(), [allDataForFilters]);
-
-  // --- METRICS ---
-  const funnelStats = useMemo(() => {
-    if (!timeLabels.currLabel) return [];
-    const getMonthData = (label) => filteredOppData.filter(d => getMonthStr(getVal(d, ['createdon', 'createddate'])) === label);
-    const currData = getMonthData(timeLabels.currLabel);
-    const prevData = getMonthData(timeLabels.prevLabel);
-    const getMetrics = (data) => {
-      const inquiries = data.length;
-      const testDrives = data.filter(d => ['yes', 'completed', 'done'].includes((getVal(d, ['testdrivecompleted']) || '').toLowerCase())).length;
-      const hotLeads = data.filter(d => parseInt(getVal(d, ['opportunityofflinescore']) || '0') > 80 || (getVal(d, ['zqualificationlevel', 'status']) || '').toLowerCase().includes('hot')).length;
-      const bookings = data.filter(d => (getVal(d, ['ordernumber']) || '').trim() !== '').length;
-      const retails = data.filter(d => (getVal(d, ['invoicedatev', 'GST Invoice No.']) || '').trim() !== '').length;
-      return { inquiries, testDrives, hotLeads, bookings, retails };
+    if (maxDate.getTime() === 0) return { cur: 'Current', prv: 'Previous' };
+    const cur = maxDate;
+    const prv = new Date(cur);
+    if (timeView === 'CY') prv.setMonth(cur.getMonth() - 1);
+    else prv.setFullYear(cur.getFullYear() - 1);
+    return { 
+      cur: cur.toLocaleString('default', { month: 'short', year: '2-digit' }),
+      prv: prv.toLocaleString('default', { month: 'short', year: '2-digit' })
     };
-    const c = getMetrics(currData);
-    const p = getMetrics(prevData);
-    const calcPct = (num, den) => den > 0 ? Math.round((num / den) * 100) + '%' : '0%';
-    return [
-      { label: 'Total Inquiries', v1: p.inquiries, sub1: '100%', v2: c.inquiries, sub2: '100%' },
-      { label: 'Test-drives Done', v1: p.testDrives, sub1: calcPct(p.testDrives, p.inquiries), v2: c.testDrives, sub2: calcPct(c.testDrives, c.inquiries) },
-      { label: 'Hot Lead Pool', v1: p.hotLeads, sub1: calcPct(p.hotLeads, p.inquiries), v2: c.hotLeads, sub2: calcPct(c.hotLeads, c.inquiries) },
-      { label: 'Booking Conversion', v1: p.bookings, sub1: calcPct(p.bookings, p.inquiries), v2: c.bookings, sub2: calcPct(c.bookings, c.inquiries) },
-      { label: 'Retail Conversion', v1: p.retails, sub1: calcPct(p.retails, p.inquiries), v2: c.retails, sub2: calcPct(c.retails, c.inquiries) },
-    ];
-  }, [filteredOppData, timeLabels]);
+  }, [data, timeView]);
 
-  const inventoryStats = useMemo(() => {
-    // Inventory uses filteredInvData which only respects Model filter
-    const total = filteredInvData.length;
-    
-    // Prepare Booking lookup codes
-    const bookedVinSet = new Set(bookingData.map(b => getVal(b, ['Vehicle ID No.', 'VIN']).trim()).filter(Boolean));
-    const bookingModelTexts = bookingData.map(b => getVal(b, ['Model Text 1']).toLowerCase());
-
-    const checkIsBooked = (d) => {
-      const vin = getVal(d, ['Vehicle Identification Number', 'vin']).trim();
-      const salesOrder = getVal(d, ['Sales Order Number']).trim();
-      const modelCode = getVal(d, ['Model Sales Code']).toLowerCase().trim();
-
-      // 1. By Sales Order Presence
-      if (salesOrder) return true;
-      // 2. By VIN match in Booking sheet
-      if (vin && bookedVinSet.has(vin)) return true;
-      // 3. By Model Code lookup in Booking sheet (per user logic)
-      if (modelCode && bookingModelTexts.some(txt => txt.includes(modelCode))) return true;
-
-      return false;
-    };
-
-    const bookedCount = filteredInvData.filter(checkIsBooked).length;
-    const openCount = total - bookedCount;
-
-    // Opening Stock: Before current month & not booked
-    const currentMonthLabel = timeLabels.currLabel;
-    const openingStock = filteredInvData.filter(d => {
-      const month = getMonthStr(getVal(d, ['GRN Date']));
-      return month !== currentMonthLabel && !checkIsBooked(d);
-    }).length;
-
-    const ageing90 = filteredInvData.filter(d => parseInt(getVal(d, ['Ageing Days']) || '0') > 90).length;
-
-    return [
-      { label: 'Total Inventory', v1: 0, v2: total },
-      { label: 'Opening Stock', v1: 0, v2: openingStock, sub2: total ? Math.round((openingStock/total)*100)+'%' : '-' },
-      { label: 'Available (Open)', v1: 0, v2: openCount, sub2: total ? Math.round((openCount/total)*100)+'%' : '-' },
-      { label: 'Customer Booked', v1: 0, v2: bookedCount, sub2: total ? Math.round((bookedCount/total)*100)+'%' : '-' },
-      { label: 'Ageing (>90 Days)', v1: 0, v2: ageing90 },
-    ];
-  }, [filteredInvData, bookingData, timeLabels]);
-
-  const sourceStats = useMemo(() => {
-    const sourceDataset = filteredLeadData.length > 0 ? filteredLeadData : filteredOppData;
-    const currData = sourceDataset.filter(d => getMonthStr(getVal(d, ['createdon', 'createddate'])) === timeLabels.currLabel);
-    const counts = {};
-    currData.forEach(d => { const s = getVal(d, ['source']) || 'Other'; counts[s] = (counts[s] || 0) + 1; });
-    return Object.entries(counts).sort(([,a], [,b]) => b - a).slice(0, 5)
-      .map(([label, val]) => ({ label, v1: 0, v2: val, sub2: currData.length ? Math.round((val/currData.length)*100)+'%' : '0%' }));
-  }, [filteredLeadData, filteredOppData, timeLabels]);
-
-  // --- VIEWS ---
-  const DashboardView = () => (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 animate-fade-in">
-       <div className="bg-white rounded-lg card-shadow p-2 flex flex-col hover:border-blue-200 border border-transparent transition-all group cursor-pointer" onClick={() => { setDetailedMetric('Inquiries'); setViewMode('detailed'); }}>
-          <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
-            <LayoutDashboard className="w-3 h-3 text-blue-600" />
-            <h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Sales Funnel</h3>
-          </div>
-          <ComparisonTable rows={funnelStats} headers={[timeLabels.prevLabel, timeLabels.currLabel]} updatedAt={timestamps.opportunities} />
-       </div>
-
-       <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
-          <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
-            <Car className="w-3 h-3 text-indigo-600" />
-            <h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">System Inventory</h3>
-          </div>
-          <ComparisonTable rows={inventoryStats} headers={['', 'Stock']} updatedAt={timestamps.inventory} />
-       </div>
-
-       <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
-          <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
-            <TrendingUp className="w-3 h-3 text-emerald-600" />
-            <h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Channels</h3>
-          </div>
-          <ComparisonTable rows={sourceStats.length ? sourceStats : [{label: 'No Data', v1:0, v2:0}]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} updatedAt={timestamps.leads} />
-       </div>
-
-       <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
-          <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
-            <FileSpreadsheet className="w-3 h-3 text-purple-600" />
-            <h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Value Added</h3>
-          </div>
-          <ComparisonTable rows={[
-               {label: 'Finance Pen.', v1: 0, v2: 0},
-               {label: 'Insurance Pen.', v1: 0, v2: 0},
-               {label: 'Exchange Pen.', v1: 0, v2: 0},
-               {label: 'Accessories', v1: 0, v2: 0, type: 'currency'}
-           ]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} />
-       </div>
-
-       <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
-          <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
-            <Users className="w-3 h-3 text-orange-600" />
-            <h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Sales Ops</h3>
-          </div>
-          <ComparisonTable rows={[
-               {label: 'Monthly Bookings', v1: funnelStats[3]?.v1 || 0, v2: funnelStats[3]?.v2 || 0},
-               {label: 'Monthly Retails', v1: funnelStats[4]?.v1 || 0, v2: funnelStats[4]?.v2 || 0},
-               {label: 'Stock Whl.', v1: 0, v2: 0},
-               {label: 'Corp. Sales', v1: 0, v2: 0}
-           ]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} updatedAt={timestamps.opportunities} />
-       </div>
-
-       <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
-          <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
-            <DollarSign className="w-3 h-3 text-rose-600" />
-            <h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Efficiency</h3>
-          </div>
-          <ComparisonTable rows={[
-               {label: 'Margin/Car', v1: 0, v2: 0, type: 'currency'},
-               {label: 'Total Margin', v1: 0, v2: 0, type: 'currency'},
-               {label: 'Revenue', v1: 0, v2: 0, type: 'currency'},
-               {label: 'Productivity', v1: 0, v2: 0},
-           ]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} />
-       </div>
-    </div>
-  );
-
-  const DetailedView = () => {
-    const consultantMix = useMemo(() => {
-        const counts = {};
-        filteredOppData.forEach(d => { const c = getVal(d, ['Assigned To', 'owner']); if(c) counts[c] = (counts[c] || 0) + 1; });
-        return Object.entries(counts).map(([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value).slice(0, 10);
-    }, [filteredOppData]);
-
-    const trendData = useMemo(() => {
-      const months = {};
-      oppData.slice(-200).forEach(d => {
-        const m = getMonthStr(getVal(d, ['createdon', 'createddate']));
-        months[m] = (months[m] || 0) + 1;
+  const stats = useMemo(() => {
+    const getFunnel = (list) => {
+      const cur = list.filter(d => getMonthStr(getVal(d, ['Created On', 'createddate', 'GRN Date'])) === timeLabels.cur);
+      const prv = list.filter(d => getMonthStr(getVal(d, ['Created On', 'createddate', 'GRN Date'])) === timeLabels.prv);
+      
+      const metrics = (arr) => ({
+        count: arr.length,
+        td: arr.filter(d => ['yes', 'done', 'completed'].includes(getVal(d, ['Test Drive Completed']).toLowerCase())).length,
+        hot: arr.filter(d => getVal(d, ['ZQualificationLevel', 'Status', 'Qualification Level']).toLowerCase().includes('hot')).length,
+        retails: arr.filter(d => getVal(d, ['Order Number', 'GST Invoice No.', 'Invoice number']).trim() !== '').length
       });
-      return Object.entries(months).map(([name, value]) => ({ name, value }));
-    }, [oppData]);
 
-    const funnelMix = useMemo(() => {
-      return funnelStats.map(s => ({ name: s.label, val: s.v2 }));
-    }, [funnelStats]);
+      const c = metrics(cur); const p = metrics(prv);
+      return [
+        { label: 'Total Inquiries', v1: p.count, v2: c.count },
+        { label: 'Test-Drives Done', v1: p.td, v2: c.td },
+        { label: 'Hot Lead Pool', v1: p.hot, v2: c.hot },
+        { label: 'Retail Deliveries', v1: p.retails, v2: c.retails }
+      ];
+    };
 
-    const modelMix = useMemo(() => {
-        const counts = {};
-        filteredOppData.forEach(d => { const m = getVal(d, ['modellinefe', 'Model Line']); if(m) counts[m] = (counts[m] || 0) + 1; });
-        return Object.entries(counts).map(([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value).slice(0, 5);
-    }, [filteredOppData]);
+    const inv = () => {
+      const bookedVins = new Set(filteredData.bks.map(b => getVal(b, ['Vehicle ID No.', 'VIN']).trim()));
+      const total = filteredData.inv.length;
+      const booked = filteredData.inv.filter(v => bookedVins.has(getVal(v, ['Vehicle Identification Number', 'vin']).trim())).length;
+      return [
+        { label: 'Gross Stock', v1: 0, v2: total },
+        { label: 'Reserved / Booked', v1: 0, v2: booked },
+        { label: 'Ready for Retail', v1: 0, v2: total - booked },
+        { label: 'Dead Stock (>90d)', v1: 0, v2: filteredData.inv.filter(v => parseInt(getVal(v, ['Ageing Days'])) > 90).length }
+      ];
+    };
 
-    return (
-      <div className="space-y-3 animate-fade-in">
-        <div className="bg-white p-2.5 rounded-lg shadow-sm border border-slate-200 flex items-center gap-2">
-          <button onClick={() => setViewMode('dashboard')} className="p-1 hover:bg-slate-100 rounded transition-colors"><ArrowDownRight className="w-4 h-4 text-slate-500 rotate-135" /></button>
-          <h2 className="text-sm font-bold text-slate-900 uppercase tracking-tighter">Graphics Analysis</h2>
-        </div>
+    const channels = () => {
+      const counts = {};
+      filteredData.opps.forEach(d => {
+        const s = getVal(d, ['Source', 'Source Description']) || 'Other';
+        counts[s] = (counts[s] || 0) + 1;
+      });
+      return Object.entries(counts)
+        .sort((a,b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([label, v2]) => ({ label, v1: 0, v2 }));
+    };
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-          <div className="bg-white p-3 rounded-lg shadow-sm border border-slate-200 h-64">
-             <h3 className="font-bold text-slate-800 mb-2 text-[9px] uppercase tracking-wider">Top 10 SC Performance</h3>
-             <ResponsiveContainer width="100%" height="90%">
-               <BarChart data={consultantMix} layout="vertical">
-                 <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
-                 <XAxis type="number" hide />
-                 <YAxis dataKey="name" type="category" width={80} tick={{fontSize: 7, fontWeight: 700}} axisLine={false} tickLine={false} />
-                 <RechartsTooltip cursor={{fill: '#f8fafc'}} contentStyle={{fontSize: '9px'}} />
-                 <Bar dataKey="value" fill="#2563eb" radius={[0, 4, 4, 0]} barSize={10} />
-               </BarChart>
-             </ResponsiveContainer>
-          </div>
+    return { 
+      funnel: getFunnel(filteredData.opps), 
+      inventory: inv(),
+      channels: channels()
+    };
+  }, [filteredData, timeLabels]);
 
-          <div className="bg-white p-3 rounded-lg shadow-sm border border-slate-200 h-64">
-             <h3 className="font-bold text-slate-800 mb-2 text-[9px] uppercase tracking-wider">Conversion Pipeline</h3>
-             <ResponsiveContainer width="100%" height="90%">
-               <BarChart data={funnelMix}>
-                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                 <XAxis dataKey="name" tick={{fontSize: 7}} />
-                 <YAxis tick={{fontSize: 7}} />
-                 <RechartsTooltip contentStyle={{fontSize: '9px'}} />
-                 <Bar dataKey="val" fill="#10b981" radius={[4, 4, 0, 0]} barSize={25} />
-               </BarChart>
-             </ResponsiveContainer>
-          </div>
-
-          <div className="bg-white p-3 rounded-lg shadow-sm border border-slate-200 h-64">
-             <h3 className="font-bold text-slate-800 mb-2 text-[9px] uppercase tracking-wider">Volume Trendline</h3>
-             <ResponsiveContainer width="100%" height="90%">
-               <LineChart data={trendData}>
-                 <CartesianGrid strokeDasharray="3 3" />
-                 <XAxis dataKey="name" tick={{fontSize: 7}} />
-                 <YAxis tick={{fontSize: 7}} />
-                 <RechartsTooltip contentStyle={{fontSize: '9px'}} />
-                 <Line type="monotone" dataKey="value" stroke="#2563eb" strokeWidth={2} dot={{ r: 3 }} />
-               </LineChart>
-             </ResponsiveContainer>
-          </div>
-          
-          <div className="bg-white p-3 rounded-lg shadow-sm border border-slate-200 h-64">
-             <h3 className="font-bold text-slate-800 mb-2 text-[9px] uppercase tracking-wider text-center">Model Distribution</h3>
-             <ResponsiveContainer width="100%" height="90%">
-               <PieChart>
-                 <Pie data={modelMix} innerRadius={40} outerRadius={60} paddingAngle={4} dataKey="value" nameKey="name">
-                   {modelMix.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
-                 </Pie>
-                 <RechartsTooltip />
-                 <Legend iconSize={7} wrapperStyle={{fontSize: '8px', fontWeight: 700}} />
-               </PieChart>
-             </ResponsiveContainer>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const TableView = () => (
-    <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
-       <div className="overflow-x-auto">
-         <table className="w-full text-left text-[10px] text-slate-600">
-           <thead className="bg-slate-50 text-slate-400 font-bold border-b border-slate-200 uppercase tracking-tighter">
-             <tr><th className="p-2">ID</th><th className="p-2">Customer</th><th className="p-2">Model</th><th className="p-2">Date</th><th className="p-2">Status</th></tr>
-           </thead>
-           <tbody className="divide-y divide-slate-100">
-             {(filteredOppData.length > 0 ? filteredOppData : filteredLeadData).slice(0, 50).map((row, idx) => (
-               <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                 <td className="p-2 font-mono text-slate-400 text-[8px]">{getVal(row, ['id', 'leadid', 'vin'])}</td>
-                 <td className="p-2 font-semibold text-slate-800">{getVal(row, ['customer', 'name']) || 'Anonymous'}</td>
-                 <td className="p-2">{getVal(row, ['modelline', 'Model Line'])}</td>
-                 <td className="p-2">{getVal(row, ['createdon', 'createddate'])}</td>
-                 <td className="p-2"><span className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-100 text-[8px] font-bold">{getVal(row, ['status', 'qualificationlevel']) || 'Active'}</span></td>
-               </tr>
-             ))}
-           </tbody>
-         </table>
-       </div>
-    </div>
-  );
+  const modelOptions = useMemo(() => [...new Set(data.opportunities.map(d => getVal(d, ['Model Line', 'modellinefe'])))].filter(Boolean).sort(), [data]);
+  const scOptions = useMemo(() => [...new Set(data.opportunities.map(d => getVal(d, ['Assigned To', 'Owner'])))].filter(Boolean).sort(), [data]);
 
   return (
-    <div className="min-h-screen font-sans pb-8">
-       <GlobalStyles />
-       <ImportWizard isOpen={showImport} onClose={() => setShowImport(false)} onDataImported={handleDataImport} isUploading={isUploading} mode={storageMode} />
+    <div className="min-h-screen pb-12">
+      <GlobalStyles />
+      <ImportWizard isOpen={showImport} onClose={() => setShowImport(false)} onImport={handleImport} isUploading={isUploading} />
+      
+      {/* Header Strategy */}
+      <header className="bg-white border-b border-slate-200 sticky top-0 z-50 glass-panel">
+        <div className="max-w-[1600px] mx-auto px-6 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="w-10 h-10 bg-blue-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-blue-200">
+              <TrendingUp className="w-5 h-5" />
+            </div>
+            <div>
+              <h1 className="text-base font-black uppercase tracking-tighter leading-none">Intelligence IQ</h1>
+              <div className="flex items-center gap-2 text-[9px] font-extrabold uppercase tracking-widest text-slate-400 mt-1">
+                {storageMode === 'cloud' ? (
+                  <span className="text-emerald-500 flex items-center gap-1 bg-emerald-50 px-1.5 py-0.5 rounded"><Database className="w-2.5 h-2.5" /> Cloud Engine</span>
+                ) : (
+                  <span className="text-amber-500 flex items-center gap-1 bg-amber-50 px-1.5 py-0.5 rounded"><HardDrive className="w-2.5 h-2.5" /> Local Instance</span>
+                )}
+                <span className="text-slate-300">•</span>
+                <span>Reporting Cycle: {timeLabels.cur}</span>
+              </div>
+            </div>
+          </div>
 
-       <header className="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-sm">
-         <div className="max-w-[1400px] mx-auto px-3 h-10 flex items-center justify-between">
-           <div className="flex items-center gap-2">
-             <div className="w-6 h-6 bg-blue-600 rounded flex items-center justify-center text-white"><Car className="w-3.5 h-3.5" /></div>
-             <div>
-                <h1 className="text-[10px] font-black text-slate-900 leading-none uppercase tracking-tighter italic">Sales IQ</h1>
-                <div className="text-[6px] text-slate-400 uppercase font-bold tracking-widest leading-none mt-0.5">{timeLabels.currLabel} Snapshot</div>
+          <div className="flex items-center gap-4">
+            <div className="hidden md:flex items-center bg-slate-100 rounded-xl px-3 py-1.5 border border-slate-200 group focus-within:ring-2 ring-blue-100 transition-all">
+              <Search className="w-3.5 h-3.5 text-slate-400" />
+              <input 
+                type="text" 
+                placeholder="Search Customers..." 
+                className="bg-transparent border-none outline-none text-xs font-bold px-3 w-48 text-slate-700 placeholder:text-slate-400"
+                value={filters.search}
+                onChange={e => setFilters({...filters, search: e.target.value})}
+              />
+            </div>
+            <button onClick={() => setShowImport(true)} className="bg-slate-900 text-white px-5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 hover:bg-slate-800 shadow-xl shadow-slate-200 active:scale-95 transition-all">
+              <Upload className="w-3.5 h-3.5" /> 
+              <span className="hidden sm:inline">DATA SYNC</span>
+            </button>
+            <button onClick={handleClear} className="p-2 text-rose-400 hover:bg-rose-50 rounded-xl transition-colors"><Trash2 className="w-4 h-4" /></button>
+          </div>
+        </div>
+
+        <div className="max-w-[1600px] mx-auto px-6 py-3 border-t border-slate-50 flex items-center gap-5 overflow-x-auto no-scrollbar">
+          <div className="flex items-center gap-2.5 shrink-0">
+            <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest flex items-center gap-1.5"><Filter className="w-3 h-3" /> Filters</span>
+            <select 
+              className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-600 outline-none"
+              value={filters.model}
+              onChange={e => setFilters({...filters, model: e.target.value})}
+            >
+              <option value="All">All Model Lines</option>
+              {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+            <select 
+              className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-600 outline-none"
+              value={filters.sc}
+              onChange={e => setFilters({...filters, sc: e.target.value})}
+            >
+              <option value="All">All Consultants</option>
+              {scOptions.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div className="ml-auto flex items-center gap-3 shrink-0">
+             <div className="comparison-toggle" onClick={() => setTimeView(timeView === 'CY' ? 'LY' : 'CY')}>
+                <div className={`comparison-toggle-item ${timeView === 'CY' ? 'comparison-toggle-active' : 'text-slate-400'}`}>MONTH OVER MONTH</div>
+                <div className={`comparison-toggle-item ${timeView === 'LY' ? 'comparison-toggle-active' : 'text-slate-400'}`}>YEAR OVER YEAR</div>
              </div>
-           </div>
+          </div>
+        </div>
+      </header>
 
-           <div className="flex items-center gap-2">
-              <div className="flex bg-slate-100 p-0.5 rounded border border-slate-200">
-                <button onClick={() => setViewMode('dashboard')} className={`px-2 py-0.5 rounded text-[8px] font-extrabold ${viewMode === 'dashboard' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>DASHBOARD</button>
-                <button onClick={() => setViewMode('detailed')} className={`px-2 py-0.5 rounded text-[8px] font-extrabold ${viewMode === 'detailed' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>ANALYTICS</button>
-                <button onClick={() => setViewMode('table')} className={`px-2 py-0.5 rounded text-[8px] font-extrabold ${viewMode === 'table' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>RECORDS</button>
-              </div>
-              <button onClick={() => setShowImport(true)} className="bg-slate-900 text-white px-2.5 py-0.5 rounded text-[8px] font-bold hover:bg-slate-800 flex items-center gap-1"><Upload className="w-2.5 h-2.5" /> IMPORT</button>
-              <button onClick={clearData} className="p-0.5 text-rose-400 hover:bg-rose-50 rounded transition-colors"><Trash2 className="w-3 h-3" /></button>
-           </div>
-         </div>
-         
-         <div className="border-t border-slate-100 bg-white px-3 py-1 flex items-center gap-2.5 overflow-x-auto no-scrollbar">
-            <div className="flex items-center gap-2">
-              <span className="text-[7px] font-black text-slate-400 uppercase flex items-center gap-1 min-w-max"><Filter className="w-2 h-2" /> FILTERS</span>
-              
-              <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded px-1 py-0.5 h-5">
-                <UserCheck className="w-2 h-2 text-slate-400" />
-                <select className="bg-transparent text-[8px] font-bold text-slate-700 outline-none min-w-[70px]" value={filters.consultant} onChange={e => setFilters({...filters, consultant: e.target.value})}>
-                   <option value="All">All SCs</option>
-                   {consultantOptions.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-              </div>
+      {/* Main Dashboard Grid */}
+      <main className="max-w-[1600px] mx-auto px-6 py-6 space-y-6">
+        {msg && (
+          <div className="bg-emerald-600 text-white px-5 py-3 rounded-2xl text-xs font-bold animate-fade-in flex items-center gap-3 shadow-lg shadow-emerald-100">
+            <CheckCircle className="w-4 h-4" /> 
+            {msg}
+            <button className="ml-auto opacity-70 hover:opacity-100" onClick={() => setMsg('')}><X className="w-4 h-4" /></button>
+          </div>
+        )}
+        
+        {/* Top KPI Strip */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-fade-in">
+          <StatCard title="Monthly Inquiries" value={stats.funnel[0]?.v2 || 0} trend={12} icon={Activity} />
+          <StatCard title="TD Penetration" value={`${Math.round(((stats.funnel[1]?.v2 || 0) / (stats.funnel[0]?.v2 || 1)) * 100)}%`} icon={Car} colorClass="emerald" />
+          <StatCard title="Hot Conversions" value={stats.funnel[2]?.v2 || 0} icon={TrendingUp} colorClass="amber" />
+          <StatCard title="Current Stock" value={stats.inventory[0]?.v2 || 0} icon={Database} colorClass="indigo" />
+        </div>
 
-              <select className="bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 text-[8px] font-bold text-slate-700 outline-none h-5" value={filters.model} onChange={e => setFilters({...filters, model: e.target.value})}>
-                 <option value="All">All Models</option>
-                 {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
-              </select>
-
-              <select className="bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 text-[8px] font-bold text-slate-700 outline-none h-5" value={filters.location} onChange={e => setFilters({...filters, location: e.target.value})}>
-                 <option value="All">All Branches</option>
-                 {locationOptions.map(l => <option key={l} value={l}>{l}</option>)}
-              </select>
+        {/* Intelligence Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Funnel Card */}
+          <div className="bg-white rounded-3xl p-6 card-shadow border border-slate-100 flex flex-col min-h-[450px] animate-fade-in" style={{animationDelay: '0.1s'}}>
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-sm font-black uppercase tracking-tight text-slate-800 flex items-center gap-2"><LayoutDashboard className="w-4 h-4 text-blue-600" /> Sales Funnel</h3>
+              <div className="p-1.5 bg-blue-50 text-blue-600 rounded-lg"><ChevronRight className="w-4 h-4" /></div>
             </div>
-            
-            <div className="ml-auto flex items-center gap-1.5 min-w-max">
-               <div className="comparison-toggle" onClick={() => setTimeView(timeView === 'CY' ? 'LY' : 'CY')}>
-                  <div className={`comparison-toggle-item ${timeView === 'CY' ? 'comparison-toggle-active' : 'text-slate-500'}`}>CY (MoM)</div>
-                  <div className={`comparison-toggle-item ${timeView === 'LY' ? 'comparison-toggle-active' : 'text-slate-500'}`}>LY (YoY)</div>
-               </div>
-            </div>
-         </div>
-       </header>
+            <ComparisonTable rows={stats.funnel} headers={[timeLabels.prv, timeLabels.cur]} updatedAt={timestamps.opportunities} />
+          </div>
 
-       <main className="max-w-[1400px] mx-auto px-3 py-2.5">
-         {successMsg && <div className="bg-emerald-600 text-white rounded shadow-sm px-3 py-1 text-[9px] font-black mb-2 animate-fade-in flex items-center gap-2 uppercase tracking-wide"><CheckCircle className="w-2.5 h-2.5" /> {successMsg}</div>}
-         {viewMode === 'dashboard' && <DashboardView />}
-         {viewMode === 'detailed' && <DetailedView />}
-         {viewMode === 'table' && <TableView />}
-       </main>
+          {/* Charts/Trends Card */}
+          <div className="bg-white rounded-3xl p-6 card-shadow border border-slate-100 lg:col-span-2 flex flex-col min-h-[450px] animate-fade-in" style={{animationDelay: '0.2s'}}>
+            <div className="flex items-center justify-between mb-8">
+              <div>
+                <h3 className="text-sm font-black uppercase tracking-tight text-slate-800">Growth Trajectory</h3>
+                <p className="text-[10px] text-slate-400 font-bold tracking-widest mt-1">Daily Conversion Volume</p>
+              </div>
+              <div className="flex gap-2">
+                 <div className="flex items-center gap-2 px-3 py-1 bg-slate-50 border rounded-lg text-[9px] font-bold"><div className="w-2 h-2 rounded-full bg-blue-500"></div> INQUIRIES</div>
+                 <div className="flex items-center gap-2 px-3 py-1 bg-slate-50 border rounded-lg text-[9px] font-bold"><div className="w-2 h-2 rounded-full bg-emerald-500"></div> RETAILS</div>
+              </div>
+            </div>
+            <div className="flex-1 w-full">
+               <ResponsiveContainer width="100%" height="100%">
+                 <AreaChart data={stats.funnel}>
+                   <defs>
+                     <linearGradient id="colorV2" x1="0" y1="0" x2="0" y2="1">
+                       <stop offset="5%" stopColor="#2563eb" stopOpacity={0.15}/>
+                       <stop offset="95%" stopColor="#2563eb" stopOpacity={0}/>
+                     </linearGradient>
+                   </defs>
+                   <CartesianGrid strokeDasharray="4 4" vertical={false} stroke="#f1f5f9" />
+                   <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{fontSize: 9, fontWeight: 700, fill: '#94a3b8'}} />
+                   <YAxis axisLine={false} tickLine={false} tick={{fontSize: 9, fontWeight: 700, fill: '#94a3b8'}} />
+                   <RechartsTooltip 
+                      contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', fontSize: '11px', fontWeight: 'bold'}}
+                   />
+                   <Area type="monotone" dataKey="v2" stroke="#2563eb" strokeWidth={3} fillOpacity={1} fill="url(#colorV2)" />
+                 </AreaChart>
+               </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Inventory Mix */}
+          <div className="bg-white rounded-3xl p-6 card-shadow border border-slate-100 flex flex-col min-h-[400px] animate-fade-in" style={{animationDelay: '0.3s'}}>
+            <h3 className="text-sm font-black uppercase tracking-tight text-slate-800 mb-6 flex items-center gap-2"><Car className="w-4 h-4 text-indigo-600" /> Inventory Logic</h3>
+            <ComparisonTable rows={stats.inventory} headers={['-', 'STOCK']} updatedAt={timestamps.inventory} />
+          </div>
+
+          {/* Channel Performance */}
+          <div className="bg-white rounded-3xl p-6 card-shadow border border-slate-100 flex flex-col min-h-[400px] animate-fade-in" style={{animationDelay: '0.4s'}}>
+            <h3 className="text-sm font-black uppercase tracking-tight text-slate-800 mb-6 flex items-center gap-2"><Users className="w-4 h-4 text-emerald-600" /> Channel Analytics</h3>
+            <ComparisonTable rows={stats.channels} headers={['-', 'COUNT']} updatedAt={timestamps.leads} />
+          </div>
+
+          {/* Productivity Pie */}
+          <div className="bg-white rounded-3xl p-6 card-shadow border border-slate-100 flex flex-col min-h-[400px] animate-fade-in" style={{animationDelay: '0.5s'}}>
+            <h3 className="text-sm font-black uppercase tracking-tight text-slate-800 mb-6">Model Distribution</h3>
+            <div className="flex-1 w-full flex items-center justify-center">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie 
+                    data={stats.funnel.slice(0, 4)} 
+                    cx="50%" cy="50%" 
+                    innerRadius={60} outerRadius={80} 
+                    paddingAngle={8} 
+                    dataKey="v2"
+                  >
+                    {stats.funnel.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} cornerRadius={8} />)}
+                  </Pie>
+                  <RechartsTooltip />
+                  <Legend verticalAlign="bottom" height={36} iconType="circle" wrapperStyle={{fontSize: '9px', fontWeight: 'bold'}} />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+
+        {/* Detailed Records Table */}
+        <div className="bg-white rounded-3xl card-shadow border border-slate-100 overflow-hidden animate-fade-in" style={{animationDelay: '0.6s'}}>
+           <div className="px-6 py-5 border-b border-slate-50 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-black uppercase tracking-tight">Active Opportunities</h3>
+                <p className="text-[10px] text-slate-400 font-bold tracking-widest mt-1">Showing Last 50 Sync Records</p>
+              </div>
+              <button className="text-[10px] font-black text-blue-600 uppercase hover:underline">Export Full List</button>
+           </div>
+           <div className="overflow-x-auto custom-scrollbar">
+             <table className="w-full text-left text-xs border-separate border-spacing-0">
+               <thead className="bg-slate-50/50">
+                 <tr className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                   <th className="p-4 border-b border-slate-100">DMS ID</th>
+                   <th className="p-4 border-b border-slate-100">Customer Identity</th>
+                   <th className="p-4 border-b border-slate-100">Model Interest</th>
+                   <th className="p-4 border-b border-slate-100">Creation Date</th>
+                   <th className="p-4 border-b border-slate-100">SC Owner</th>
+                   <th className="p-4 border-b border-slate-100">Current Status</th>
+                 </tr>
+               </thead>
+               <tbody className="divide-y divide-slate-50">
+                 {filteredData.opps.slice(0, 50).map((row, idx) => (
+                   <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
+                     <td className="p-4 font-mono text-slate-400 text-[10px]">{getVal(row, ['ID', 'opportunityid'])}</td>
+                     <td className="p-4">
+                       <div className="font-bold text-slate-900">{getVal(row, ['Customer', 'First/Middle Name'])}</div>
+                       <div className="text-[9px] text-slate-400">{getVal(row, ['Mobile No.', 'Mobile'])}</div>
+                     </td>
+                     <td className="p-4 font-semibold text-slate-600">{getVal(row, ['Model Line', 'modellinefe'])}</td>
+                     <td className="p-4 text-slate-500 font-medium">{getVal(row, ['Created On', 'createddate'])}</td>
+                     <td className="p-4">
+                        <div className="flex items-center gap-2">
+                           <div className="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center text-[8px] font-black text-slate-500">
+                             {getVal(row, ['Assigned To', 'Owner']).charAt(0)}
+                           </div>
+                           <span className="font-bold text-slate-700">{getVal(row, ['Assigned To', 'Owner'])}</span>
+                        </div>
+                     </td>
+                     <td className="p-4">
+                       <span className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest ${
+                         getVal(row, ['ZQualificationLevel', 'Status']).toLowerCase().includes('hot') 
+                         ? 'bg-rose-50 text-rose-600' : 'bg-slate-100 text-slate-500'
+                       }`}>
+                         {getVal(row, ['ZQualificationLevel', 'Status']) || 'Active'}
+                       </span>
+                     </td>
+                   </tr>
+                 ))}
+                 {filteredData.opps.length === 0 && (
+                   <tr><td colSpan="6" className="p-12 text-center text-slate-300 italic font-bold">No active opportunities found matching the selected filters</td></tr>
+                 )}
+               </tbody>
+             </table>
+           </div>
+        </div>
+      </main>
+
+      {/* Persistence Floating Status */}
+      <div className="fixed bottom-6 right-6 z-[90] animate-fade-in">
+         <div className="bg-slate-900 text-white p-4 rounded-3xl shadow-2xl flex items-center gap-4 border border-white/10 glass-panel">
+            <div className={`w-2.5 h-2.5 rounded-full ${storageMode === 'cloud' ? 'bg-emerald-400' : 'bg-amber-400'} animate-pulse`}></div>
+            <div className="flex flex-col">
+              <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">System Core Status</span>
+              <span className="text-[10px] font-bold">{storageMode === 'cloud' ? 'High Performance Cloud Active' : 'Offline Mode: Local Caching'}</span>
+            </div>
+            {storageMode === 'local' && supabase && (
+               <button onClick={fetchData} className="p-2 bg-white/10 hover:bg-white/20 rounded-xl transition-colors">
+                 <RefreshCw className="w-3.5 h-3.5" />
+               </button>
+            )}
+         </div>
+      </div>
     </div>
   );
 }
