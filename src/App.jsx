@@ -111,7 +111,8 @@ const parseCSV = (text) => {
   let headerIndex = 0;
   for (let i = 0; i < Math.min(lines.length, 20); i++) {
     const rawLine = lines[i].toLowerCase();
-    const keywords = ['id', 'lead id', 'order number', 'vin', 'engine number', 'dealer code'];
+    // Headers specific to EXPORT Inventory: 'Model Line', 'Engine Number', 'GRN Date'
+    const keywords = ['id', 'lead id', 'order number', 'vin', 'engine number', 'grn date'];
     if (keywords.some(k => rawLine.includes(k))) {
       headerIndex = i;
       break;
@@ -152,37 +153,41 @@ const uploadToSupabase = async (userId, tableName, data) => {
   if (!supabase) throw new Error("Supabase client not initialized.");
   
   const records = data.map(item => {
+    // We save the raw columns mapped to normalized SQL-friendly keys
     const base = { user_id: userId };
     
-    // Normalize keys to lowercase for SQL column compatibility
+    // Auto-map all CSV keys to lowercase-no-space keys for SQL compatibility
     Object.keys(item).forEach(key => {
       const normalizedKey = key.toLowerCase().replace(/[\s_().-]/g, '');
-      base[normalizedKey] = item[key];
+      if (normalizedKey && normalizedKey !== 'user_id') {
+        base[normalizedKey] = item[key];
+      }
     });
 
-    // Identifying Primary Keys for Upsert Logic (Using Engine Number instead of VIN)
+    // Ensure identification columns are strictly set based on the table requirements
     if (tableName === 'opportunities') {
       base.id = getVal(item, ['id', 'opportunityid']);
     } else if (tableName === 'leads') {
       base.leadid = getVal(item, ['leadid', 'lead id']);
     } else if (tableName === 'inventory') {
-      base.enginenumber = getVal(item, ['engine number', 'enginenumber']).trim().toUpperCase();
+      // Using Engine Number as the unique ID for Inventory to avoid VIN matching issues
+      base.enginenumber = getVal(item, ['Engine Number', 'enginenumber']).trim().toUpperCase();
     } else if (tableName === 'bookings') {
-      base.enginenumber = getVal(item, ['engine number', 'enginenumber']).trim().toUpperCase();
+      base.enginenumber = getVal(item, ['Engine Number', 'enginenumber']).trim().toUpperCase();
     }
     
     return base;
   });
 
-  // Unique conflict target switched to 'enginenumber' for physical assets
   const conflictColumn = tableName === 'opportunities' ? 'id' : (tableName === 'leads' ? 'leadid' : 'enginenumber');
 
+  // Upsert into Supabase
   const { error } = await supabase
     .from(tableName)
     .upsert(records, { onConflict: conflictColumn });
 
   if (error) {
-    console.error(`Save Error [${tableName}]:`, error);
+    console.error(`SQL Upsert Error [${tableName}]:`, error);
     throw error;
   }
   return data.length;
@@ -192,8 +197,8 @@ const mergeLocalData = (currentData, newData, type) => {
   const getKey = (item) => {
     if (type === 'opportunities') return getVal(item, ['id', 'opportunityid']);
     if (type === 'leads') return getVal(item, ['leadid', 'lead id']);
-    if (type === 'inventory') return getVal(item, ['engine number', 'enginenumber']).trim().toUpperCase();
-    if (type === 'bookings') return getVal(item, ['engine number', 'enginenumber']).trim().toUpperCase();
+    if (type === 'inventory') return getVal(item, ['Engine Number', 'enginenumber']).trim().toUpperCase();
+    if (type === 'bookings') return getVal(item, ['Engine Number', 'enginenumber']).trim().toUpperCase();
     return Math.random().toString();
   };
 
@@ -228,17 +233,18 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) =>
       if (headerString.includes('opportunity offline score')) type = 'opportunities';
       else if (headerString.includes('booking to delivery') || headerString.includes('model text 1')) type = 'bookings';
       else if (headerString.includes('lead id') || headerString.includes('qualification level')) type = 'leads';
-      else if (headerString.includes('engine number') || headerString.includes('grn date') || headerString.includes('chassis')) type = 'inventory'; 
+      // Detecting inventory specifically from headers in 'EXPORT Inventory.csv'
+      else if (headerString.includes('model line') && headerString.includes('engine number')) type = 'inventory'; 
 
       if (type === 'unknown') {
-        throw new Error("CSV structure not recognized. Ensure headers include 'Engine Number' or 'Lead ID'.");
+        throw new Error("File structure not recognized. Please ensure headers like 'Engine Number' or 'Lead ID' are present.");
       }
 
       await onDataImported(rows, type, overwrite);
       setFile(null);
       onClose();
     } catch (error) {
-      alert("Error: " + error.message);
+      alert("Error processing file: " + error.message);
     }
   };
 
@@ -266,7 +272,7 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) =>
              <input type="checkbox" id="overwrite" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500" />
              <label htmlFor="overwrite" className="text-[11px] font-bold text-slate-600 cursor-pointer">Overwrite Existing Data (Start Fresh)</label>
           </div>
-          <p className="text-[9px] text-slate-400 italic text-center">Auto-detection active. Inventory requires Engine Number or GRN Date.</p>
+          <p className="text-[9px] text-slate-400 italic text-center">Auto-detection active. Recognized headers: Model Line, Engine Number, Lead ID.</p>
         </div>
 
         <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 flex justify-end gap-2">
@@ -379,7 +385,7 @@ export default function App() {
              if (data) {
                 setter(data);
                 setTimestamps(prev => ({...prev, [key]: now}));
-                console.log(`Cloud Sync: ${data.length} records from ${table}`);
+                console.log(`Cloud Data Loaded [${table}]: ${data.length} records.`);
              }
           };
 
@@ -450,13 +456,14 @@ export default function App() {
     const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     try {
       if (storageMode === 'cloud' && user) {
-         console.log(`Cloud Save Mode: Upserting ${newData.length} records to ${type}...`);
+         console.log(`Saving to SQL: ${type}...`);
          if (overwrite) {
             await supabase.from(type).delete().eq('user_id', user.id);
          }
          const count = await uploadToSupabase(user.id, type, newData);
          setSuccessMsg(`Synced ${count} to Cloud`);
          
+         // Final Refresh
          const { data } = await supabase.from(type).select('*').eq('user_id', user.id);
          if (type === 'opportunities') setOppData(data);
          else if (type === 'leads') setLeadData(data);
@@ -481,15 +488,15 @@ export default function App() {
       setTimestamps(prev => ({...prev, [type]: now}));
       setTimeout(() => setSuccessMsg(''), 5000);
     } catch (e) {
-      console.error("Persistence Error:", e);
-      alert("Error: " + e.message);
+      console.error("Save Failure:", e);
+      alert("Error saving data: " + e.message);
     } finally {
       setIsUploading(false);
     }
   };
 
   const clearData = async () => {
-    if(window.confirm("Delete all records?")) {
+    if(window.confirm("Delete all dashboard records?")) {
        if (storageMode === 'cloud' && user) {
           await Promise.all([
             supabase.from('opportunities').delete().eq('user_id', user.id),
@@ -508,9 +515,9 @@ export default function App() {
   // --- FILTERING ---
   const getFilteredData = (data, dataType) => {
     return data.filter(item => {
-      // Improved matching - using Engine Number as fallback for Inventory
+      // Filtering logic for display
       if (dataType === 'inventory') {
-        const itemModel = getVal(item, ['modellinefe', 'model line', 'model', 'modelline', 'enginenumber']).trim();
+        const itemModel = getVal(item, ['modelline', 'model line', 'model']).trim();
         return filters.model === 'All' || itemModel === filters.model;
       }
 
@@ -532,9 +539,9 @@ export default function App() {
   const filteredInvData = useMemo(() => getFilteredData(invData, 'inventory'), [invData, filters]);
   
   const allDataForFilters = useMemo(() => [...oppData, ...leadData, ...invData], [oppData, leadData, invData]);
-  const locationOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['Dealer Code', 'city', 'dealercode'])))].filter(Boolean).sort(), [allDataForFilters]);
-  const consultantOptions = useMemo(() => [...new Set(oppData.map(d => getVal(d, ['Assigned To', 'assignedto'])))].filter(Boolean).sort(), [oppData]);
-  const modelOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['modellinefe', 'model line', 'model', 'modelline'])))].filter(Boolean).sort(), [allDataForFilters]);
+  const locationOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['Dealer Code', 'dealercode', 'city'])))].filter(Boolean).sort(), [allDataForFilters]);
+  const consultantOptions = useMemo(() => [...new Set(oppData.map(d => getVal(d, ['Assigned To', 'assignedto', 'owner'])))].filter(Boolean).sort(), [oppData]);
+  const modelOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['modelline', 'model line', 'modellinefe'])))].filter(Boolean).sort(), [allDataForFilters]);
 
   // --- METRICS ---
   const funnelStats = useMemo(() => {
@@ -548,8 +555,8 @@ export default function App() {
       const inquiries = data.length;
       const testDrives = data.filter(d => ['yes', 'completed', 'done'].includes((getVal(d, ['testdrivecompleted']) || '').toLowerCase())).length;
       const hotLeads = data.filter(d => parseInt(getVal(d, ['opportunityofflinescore']) || '0') > 80 || (getVal(d, ['zqualificationlevel', 'status']) || '').toLowerCase().includes('hot')).length;
-      const bookings = data.filter(d => (getVal(d, ['ordernumber', 'salesorder']) || '').trim() !== '').length;
-      const retails = data.filter(d => (getVal(d, ['invoicedatev', 'gstinvoiceno']) || '').trim() !== '').length;
+      const bookings = data.filter(d => (getVal(d, ['ordernumber', 'salesorder', 'salesordernumber']) || '').trim() !== '').length;
+      const retails = data.filter(d => (getVal(d, ['gstinvoiceno', 'gst invoice no', 'invoicedatev']) || '').trim() !== '').length;
       return { inquiries, testDrives, hotLeads, bookings, retails };
     };
 
@@ -567,18 +574,21 @@ export default function App() {
   }, [filteredOppData, timeLabels]);
 
   const inventoryStats = useMemo(() => {
+    // Inventory logic: Calculations handled on-the-fly for display
     const total = filteredInvData.length;
     
-    // Cross-checking Inventory vs Bookings using Engine Number
+    // Engine Numbers of booked vehicles (using bookings cross-reference)
     const bookedEngineSet = new Set(bookingData.map(b => getVal(b, ['engine number', 'enginenumber']).trim().toUpperCase()).filter(Boolean));
     const bookingModelTexts = bookingData.map(b => getVal(b, ['model text 1', 'modeltext1']).toLowerCase());
 
     const checkIsBooked = (d) => {
       const eng = getVal(d, ['engine number', 'enginenumber']).trim().toUpperCase();
       const salesOrder = getVal(d, ['Sales Order Number', 'salesordernumber']).trim();
+      const gstInvoice = getVal(d, ['GST Invoice No.', 'gstinvoiceno']).trim();
       const modelCode = getVal(d, ['Model Sales Code', 'modelsalescode']).toLowerCase().trim();
 
-      if (salesOrder) return true;
+      // Logic: If there is an invoice or sales order, or it exists in the bookings table
+      if (salesOrder || gstInvoice) return true;
       if (eng && bookedEngineSet.has(eng)) return true;
       if (modelCode && bookingModelTexts.some(txt => txt.includes(modelCode))) return true;
 
@@ -594,7 +604,8 @@ export default function App() {
       return month !== currentMonthLabel && !checkIsBooked(d);
     }).length;
 
-    const ageing90 = filteredInvData.filter(d => parseInt(getVal(d, ['Ageing Days', 'ageingdays', 'ageing']) || '0') > 90).length;
+    // Ageing: Calculations done while showing
+    const ageing90 = filteredInvData.filter(d => parseInt(getVal(d, ['Ageing Days', 'ageingdays']) || '0') > 90).length;
 
     return [
       { label: 'Total Inventory', v1: 0, v2: total },
@@ -704,7 +715,7 @@ export default function App() {
 
     const modelMix = useMemo(() => {
         const counts = {};
-        filteredOppData.forEach(d => { const m = getVal(d, ['modellinefe', 'model line', 'model', 'modelline']); if(m) counts[m] = (counts[m] || 0) + 1; });
+        filteredOppData.forEach(d => { const m = getVal(d, ['modelline', 'model line', 'modellinefe']); if(m) counts[m] = (counts[m] || 0) + 1; });
         return Object.entries(counts).map(([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value).slice(0, 5);
     }, [filteredOppData]);
 
@@ -777,16 +788,16 @@ export default function App() {
        <div className="overflow-x-auto">
          <table className="w-full text-left text-[10px] text-slate-600">
            <thead className="bg-slate-50 text-slate-400 font-bold border-b border-slate-200 uppercase tracking-tighter">
-             <tr><th className="p-2">ID/Engine</th><th className="p-2">Customer/Vehicle</th><th className="p-2">Model</th><th className="p-2">Date</th><th className="p-2">Status</th></tr>
+             <tr><th className="p-2">ID / Engine</th><th className="p-2">Customer / Vehicle</th><th className="p-2">Model</th><th className="p-2">Status</th><th className="p-2">Date</th></tr>
            </thead>
            <tbody className="divide-y divide-slate-100">
              {[...oppData, ...leadData, ...invData].slice(0, 50).map((row, idx) => (
                <tr key={idx} className="hover:bg-slate-50 transition-colors">
                  <td className="p-2 font-mono text-slate-400 text-[8px]">{getVal(row, ['id', 'leadid', 'enginenumber'])}</td>
-                 <td className="p-2 font-semibold text-slate-800">{getVal(row, ['customer', 'name', 'model line']) || 'Record'}</td>
+                 <td className="p-2 font-semibold text-slate-800">{getVal(row, ['customer', 'name', 'model line']) || 'Entry'}</td>
                  <td className="p-2">{getVal(row, ['modelline', 'model line', 'model'])}</td>
-                 <td className="p-2">{getVal(row, ['createdon', 'createddate', 'grn date'])}</td>
-                 <td className="p-2"><span className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-100 text-[8px] font-bold">{getVal(row, ['status', 'qualificationlevel']) || 'Active'}</span></td>
+                 <td className="p-2"><span className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-100 text-[8px] font-bold">{getVal(row, ['status', 'primarystatus', 'qualificationlevel']) || 'Active'}</span></td>
+                 <td className="p-2">{getVal(row, ['createdon', 'createddate', 'grndate'])}</td>
                </tr>
              ))}
            </tbody>
@@ -806,7 +817,7 @@ export default function App() {
              <div className="w-6 h-6 bg-blue-600 rounded flex items-center justify-center text-white"><Car className="w-3.5 h-3.5" /></div>
              <div>
                 <h1 className="text-[10px] font-black text-slate-900 leading-none uppercase tracking-tighter italic">Sales IQ</h1>
-                <div className="text-[6px] text-slate-400 uppercase font-bold tracking-widest leading-none mt-0.5">{timeLabels.currLabel} Snapshot</div>
+                <div className="text-[6px] text-slate-400 uppercase font-bold tracking-widest leading-none mt-0.5">{timeLabels.currLabel} SQL SNAPSHOT</div>
              </div>
            </div>
 
