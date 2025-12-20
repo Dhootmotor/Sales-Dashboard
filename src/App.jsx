@@ -136,6 +136,7 @@ const getVal = (d, keys) => {
   if (!d) return '';
   for(let k of keys) {
     if (d[k] !== undefined && d[k] !== null) return String(d[k]);
+    // Try lowercase versions
     const normalized = k.toLowerCase().replace(/ /g, '');
     if (d[normalized] !== undefined && d[normalized] !== null) return String(d[normalized]);
     const snake = k.toLowerCase().replace(/ /g, '_');
@@ -148,34 +149,39 @@ const getVal = (d, keys) => {
 const uploadToSupabase = async (userId, tableName, data) => {
   if (!supabase) throw new Error("Supabase client not initialized.");
   
+  // Clean records and ensure primary keys exist
   const records = data.map(item => {
-    const base = { ...item, user_id: userId };
+    const cleanItem = { user_id: userId };
     
-    // Explicitly mapping identification keys to ensure Supabase conflict logic works
+    // Explicitly mapping every field from CSV to a "normalized" key that should match SQL columns
+    Object.keys(item).forEach(key => {
+      const normalizedKey = key.toLowerCase().replace(/[\s_().-]/g, '');
+      cleanItem[normalizedKey] = item[key];
+    });
+
+    // Special key handling for persistence
     if (tableName === 'opportunities') {
-      base.id = getVal(item, ['id', 'opportunityid']);
+      cleanItem.id = getVal(item, ['id', 'opportunityid']);
     } else if (tableName === 'leads') {
-      base.leadid = getVal(item, ['leadid', 'lead id']);
+      cleanItem.leadid = getVal(item, ['leadid', 'lead id']);
     } else if (tableName === 'inventory') {
-      // VINs are often case sensitive in DBs, force consistency here
-      base.vin = getVal(item, ['vin', 'vehicle identification number']).trim().toUpperCase();
+      cleanItem.vin = getVal(item, ['vin', 'vehicle identification number']).trim().toUpperCase();
     } else if (tableName === 'bookings') {
-      // For bookings, we might want a composite key or a specific ID if available
-      base.vin = getVal(item, ['vin', 'vehicle id no.']).trim().toUpperCase();
+      cleanItem.vin = getVal(item, ['vin', 'vehicle id no.']).trim().toUpperCase();
     }
     
-    return base;
+    return cleanItem;
   });
 
-  // Critical: The 'onConflict' column must have a UNIQUE constraint in Supabase SQL
   const conflictColumn = tableName === 'opportunities' ? 'id' : (tableName === 'leads' ? 'leadid' : 'vin');
 
+  // Perform bulk upsert
   const { error } = await supabase
     .from(tableName)
     .upsert(records, { onConflict: conflictColumn });
 
   if (error) {
-    console.error(`Error uploading to ${tableName}:`, error);
+    console.error(`SQL Save Error (${tableName}):`, error);
     throw error;
   }
   return data.length;
@@ -185,7 +191,6 @@ const mergeLocalData = (currentData, newData, type) => {
   const getKey = (item) => {
     if (type === 'opportunities') return getVal(item, ['id', 'opportunityid']);
     if (type === 'leads') return getVal(item, ['leadid', 'lead id']);
-    // Normalizing VIN for local storage lookup too
     if (type === 'inventory') return getVal(item, ['vin', 'vehicle identification number']).trim().toUpperCase();
     if (type === 'bookings') return getVal(item, ['vin', 'vehicle id no.']).trim().toUpperCase();
     return Math.random().toString();
@@ -219,21 +224,20 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) =>
       const headerString = rawHeaders.join(',').toLowerCase();
       let type = 'unknown';
       
-      // Detection logic
       if (headerString.includes('opportunity offline score')) type = 'opportunities';
       else if (headerString.includes('booking to delivery') || headerString.includes('model text 1')) type = 'bookings';
       else if (headerString.includes('lead id') || headerString.includes('qualification level')) type = 'leads';
       else if (headerString.includes('vehicle identification number') || headerString.includes('grn date')) type = 'inventory'; 
 
       if (type === 'unknown') {
-        throw new Error("Could not identify file type. Please check the CSV headers.");
+        throw new Error("File format not recognized. Please check headers.");
       }
 
       await onDataImported(rows, type, overwrite);
       setFile(null);
       onClose();
     } catch (error) {
-      alert("Error processing file: " + error.message);
+      alert("Error: " + error.message);
     }
   };
 
@@ -261,7 +265,7 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) =>
              <input type="checkbox" id="overwrite" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500" />
              <label htmlFor="overwrite" className="text-[11px] font-bold text-slate-600 cursor-pointer">Overwrite Existing Data (Start Fresh)</label>
           </div>
-          <p className="text-[9px] text-slate-400 italic text-center">System automatically detects file type (Inventory, Booking, etc.) based on headers.</p>
+          <p className="text-[9px] text-slate-400 italic text-center">Auto-detection active based on file headers.</p>
         </div>
 
         <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 flex justify-end gap-2">
@@ -365,29 +369,35 @@ export default function App() {
       const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       if (storageMode === 'cloud' && user) {
         try {
-          const { data: opps } = await supabase.from('opportunities').select('*').eq('user_id', user.id);
-          if (opps) { setOppData(opps); setTimestamps(prev => ({...prev, opportunities: now})); }
-          
-          const { data: leads } = await supabase.from('leads').select('*').eq('user_id', user.id);
-          if (leads) { setLeadData(leads); setTimestamps(prev => ({...prev, leads: now})); }
-          
-          const { data: inventory } = await supabase.from('inventory').select('*').eq('user_id', user.id);
-          if (inventory) { setInvData(inventory); setTimestamps(prev => ({...prev, inventory: now})); }
+          // Robust Fetching: Adding error handling for each select
+          const fetchAndSet = async (table, setter, key) => {
+             const { data, error } = await supabase.from(table).select('*').eq('user_id', user.id);
+             if (error) throw error;
+             if (data) {
+                setter(data);
+                setTimestamps(prev => ({...prev, [key]: now}));
+             }
+          };
 
-          const { data: bks } = await supabase.from('bookings').select('*').eq('user_id', user.id);
-          if (bks) { setBookingData(bks); setTimestamps(prev => ({...prev, bookings: now})); }
-        } catch (e) { console.error(e); }
-      } else {
-        try {
-          const savedOpp = localStorage.getItem('dashboard_oppData');
-          const savedLead = localStorage.getItem('dashboard_leadData');
-          const savedInv = localStorage.getItem('dashboard_invData');
-          const savedBks = localStorage.getItem('dashboard_bookingData');
-          if (savedOpp) { setOppData(JSON.parse(savedOpp)); setTimestamps(prev => ({...prev, opportunities: now})); }
-          if (savedLead) { setLeadData(JSON.parse(savedLead)); setTimestamps(prev => ({...prev, leads: now})); }
-          if (savedInv) { setInvData(JSON.parse(savedInv)); setTimestamps(prev => ({...prev, inventory: now})); }
-          if (savedBks) { setBookingData(JSON.parse(savedBks)); setTimestamps(prev => ({...prev, bookings: now})); }
-        } catch (e) { console.error(e); }
+          await Promise.all([
+            fetchAndSet('opportunities', setOppData, 'opportunities'),
+            fetchAndSet('leads', setLeadData, 'leads'),
+            fetchAndSet('inventory', setInvData, 'inventory'),
+            fetchAndSet('bookings', setBookingData, 'bookings')
+          ]);
+        } catch (e) { 
+          console.error("Fetch Error:", e);
+        }
+      } else if (storageMode === 'local') {
+        const savedOpp = localStorage.getItem('dashboard_oppData');
+        const savedLead = localStorage.getItem('dashboard_leadData');
+        const savedInv = localStorage.getItem('dashboard_invData');
+        const savedBks = localStorage.getItem('dashboard_bookingData');
+        if (savedOpp) setOppData(JSON.parse(savedOpp));
+        if (savedLead) setLeadData(JSON.parse(savedLead));
+        if (savedInv) setInvData(JSON.parse(savedInv));
+        if (savedBks) setBookingData(JSON.parse(savedBks));
+        setTimestamps(prev => ({...prev, opportunities: now, leads: now, inventory: now, bookings: now}));
       }
     };
     loadData();
@@ -437,17 +447,13 @@ export default function App() {
     try {
       if (storageMode === 'cloud' && user) {
          if (overwrite) {
-           const { error: delErr } = await supabase.from(type).delete().eq('user_id', user.id);
-           if (delErr) console.warn("Delete failed, likely no data existing:", delErr);
+            await supabase.from(type).delete().eq('user_id', user.id);
          }
-         
          const count = await uploadToSupabase(user.id, type, newData);
-         setSuccessMsg(`Synced ${count} to Supabase (${type})`);
+         setSuccessMsg(`Synced ${count} to Cloud`);
          
-         // Immediate refresh from DB
-         const { data, error: fetchErr } = await supabase.from(type).select('*').eq('user_id', user.id);
-         if (fetchErr) throw fetchErr;
-         
+         // Re-fetch to confirm persistence
+         const { data } = await supabase.from(type).select('*').eq('user_id', user.id);
          if (type === 'opportunities') setOppData(data);
          else if (type === 'leads') setLeadData(data);
          else if (type === 'inventory') setInvData(data);
@@ -466,48 +472,48 @@ export default function App() {
          else if (type === 'leads') setLeadData(merged);
          else if (type === 'inventory') setInvData(merged);
          else if (type === 'bookings') setBookingData(merged);
-         setSuccessMsg(`${overwrite ? 'Reset' : 'Merged'} ${newData.length} records locally`);
+         setSuccessMsg(`Saved locally (${newData.length} items)`);
       }
       setTimestamps(prev => ({...prev, [type]: now}));
       setTimeout(() => setSuccessMsg(''), 5000);
     } catch (e) {
-      console.error("Import Error:", e);
-      alert("Error Syncing with Supabase: " + e.message);
+      console.error("Save Error:", e);
+      alert("Persistence Error: " + e.message);
     } finally {
       setIsUploading(false);
     }
   };
 
   const clearData = async () => {
-    if(window.confirm("System Reset? This will wipe ALL records.")) {
+    if(window.confirm("Delete all records?")) {
        if (storageMode === 'cloud' && user) {
-          await supabase.from('opportunities').delete().eq('user_id', user.id);
-          await supabase.from('leads').delete().eq('user_id', user.id);
-          await supabase.from('inventory').delete().eq('user_id', user.id);
-          await supabase.from('bookings').delete().eq('user_id', user.id);
+          await Promise.all([
+            supabase.from('opportunities').delete().eq('user_id', user.id),
+            supabase.from('leads').delete().eq('user_id', user.id),
+            supabase.from('inventory').delete().eq('user_id', user.id),
+            supabase.from('bookings').delete().eq('user_id', user.id)
+          ]);
        } else {
           localStorage.clear();
        }
        setOppData([]); setLeadData([]); setInvData([]); setBookingData([]);
        setTimestamps({opportunities: null, leads: null, inventory: null, bookings: null});
-       setSuccessMsg("Cleared.");
-       setTimeout(() => setSuccessMsg(''), 3000);
     }
   };
 
   // --- FILTERING ---
   const getFilteredData = (data, dataType) => {
     return data.filter(item => {
-      // Inventory filter logic
+      // Improved matching for inventory - handle both CSV and SQL keys
       if (dataType === 'inventory') {
-        const itemModel = getVal(item, ['modellinefe', 'model line', 'model']).trim();
+        const itemModel = getVal(item, ['modellinefe', 'model line', 'model', 'modelline']).trim();
         return filters.model === 'All' || itemModel === filters.model;
       }
 
       const itemLocs = [getVal(item, ['Dealer Code']), getVal(item, ['Branch Name']), getVal(item, ['city'])].map(v => v.trim()).filter(Boolean);
       const matchLoc = filters.location === 'All' || itemLocs.includes(filters.location);
 
-      const itemModel = getVal(item, ['modellinefe', 'model line', 'model']).trim();
+      const itemModel = getVal(item, ['modellinefe', 'model line', 'model', 'modelline']).trim();
       const matchModel = filters.model === 'All' || itemModel === filters.model;
 
       const itemCons = getVal(item, ['Assigned To', 'owner']).trim();
@@ -524,7 +530,7 @@ export default function App() {
   const allDataForFilters = useMemo(() => [...oppData, ...leadData, ...invData], [oppData, leadData, invData]);
   const locationOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['Dealer Code', 'city'])))].filter(Boolean).sort(), [allDataForFilters]);
   const consultantOptions = useMemo(() => [...new Set(oppData.map(d => getVal(d, ['Assigned To'])))].filter(Boolean).sort(), [oppData]);
-  const modelOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['modellinefe', 'model line'])))].filter(Boolean).sort(), [allDataForFilters]);
+  const modelOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['modellinefe', 'model line', 'model', 'modelline'])))].filter(Boolean).sort(), [allDataForFilters]);
 
   // --- METRICS ---
   const funnelStats = useMemo(() => {
@@ -689,7 +695,7 @@ export default function App() {
 
     const modelMix = useMemo(() => {
         const counts = {};
-        filteredOppData.forEach(d => { const m = getVal(d, ['modellinefe', 'model line']); if(m) counts[m] = (counts[m] || 0) + 1; });
+        filteredOppData.forEach(d => { const m = getVal(d, ['modellinefe', 'model line', 'model', 'modelline']); if(m) counts[m] = (counts[m] || 0) + 1; });
         return Object.entries(counts).map(([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value).slice(0, 5);
     }, [filteredOppData]);
 
@@ -769,7 +775,7 @@ export default function App() {
                <tr key={idx} className="hover:bg-slate-50 transition-colors">
                  <td className="p-2 font-mono text-slate-400 text-[8px]">{getVal(row, ['id', 'leadid', 'vin'])}</td>
                  <td className="p-2 font-semibold text-slate-800">{getVal(row, ['customer', 'name', 'model line']) || 'Record'}</td>
-                 <td className="p-2">{getVal(row, ['modelline', 'model line'])}</td>
+                 <td className="p-2">{getVal(row, ['modelline', 'model line', 'model'])}</td>
                  <td className="p-2">{getVal(row, ['createdon', 'createddate', 'grn date'])}</td>
                  <td className="p-2"><span className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-100 text-[8px] font-bold">{getVal(row, ['status', 'qualificationlevel']) || 'Active'}</span></td>
                </tr>
