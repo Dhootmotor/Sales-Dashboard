@@ -111,7 +111,7 @@ const parseCSV = (text) => {
   let headerIndex = 0;
   for (let i = 0; i < Math.min(lines.length, 20); i++) {
     const rawLine = lines[i].toLowerCase();
-    const keywords = ['id', 'lead id', 'order number', 'vin', 'vehicle identification number', 'dealer code'];
+    const keywords = ['id', 'lead id', 'order number', 'vin', 'engine number', 'dealer code'];
     if (keywords.some(k => rawLine.includes(k))) {
       headerIndex = i;
       break;
@@ -125,7 +125,6 @@ const parseCSV = (text) => {
     const values = parseLine(line);
     const row = {};
     headers.forEach((h, i) => { if (h) row[h] = values[i] || ''; });
-    // Also keep raw names for better detection but standardized keys for DB
     rawHeaders.forEach((h, i) => { 
       const key = h.trim(); 
       if (key) row[key] = values[i] || ''; 
@@ -161,21 +160,22 @@ const uploadToSupabase = async (userId, tableName, data) => {
       base[normalizedKey] = item[key];
     });
 
-    // Ensure Identification Keys for Upsert Logic
+    // Identifying Primary Keys for Upsert Logic (Using Engine Number instead of VIN)
     if (tableName === 'opportunities') {
       base.id = getVal(item, ['id', 'opportunityid']);
     } else if (tableName === 'leads') {
       base.leadid = getVal(item, ['leadid', 'lead id']);
     } else if (tableName === 'inventory') {
-      base.vin = getVal(item, ['vin', 'vehicle identification number']).trim().toUpperCase();
+      base.enginenumber = getVal(item, ['engine number', 'enginenumber']).trim().toUpperCase();
     } else if (tableName === 'bookings') {
-      base.vin = getVal(item, ['vin', 'vehicle id no.']).trim().toUpperCase();
+      base.enginenumber = getVal(item, ['engine number', 'enginenumber']).trim().toUpperCase();
     }
     
     return base;
   });
 
-  const conflictColumn = tableName === 'opportunities' ? 'id' : (tableName === 'leads' ? 'leadid' : 'vin');
+  // Unique conflict target switched to 'enginenumber' for physical assets
+  const conflictColumn = tableName === 'opportunities' ? 'id' : (tableName === 'leads' ? 'leadid' : 'enginenumber');
 
   const { error } = await supabase
     .from(tableName)
@@ -192,8 +192,8 @@ const mergeLocalData = (currentData, newData, type) => {
   const getKey = (item) => {
     if (type === 'opportunities') return getVal(item, ['id', 'opportunityid']);
     if (type === 'leads') return getVal(item, ['leadid', 'lead id']);
-    if (type === 'inventory') return getVal(item, ['vin', 'vehicle identification number']).trim().toUpperCase();
-    if (type === 'bookings') return getVal(item, ['vin', 'vehicle id no.']).trim().toUpperCase();
+    if (type === 'inventory') return getVal(item, ['engine number', 'enginenumber']).trim().toUpperCase();
+    if (type === 'bookings') return getVal(item, ['engine number', 'enginenumber']).trim().toUpperCase();
     return Math.random().toString();
   };
 
@@ -228,10 +228,10 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) =>
       if (headerString.includes('opportunity offline score')) type = 'opportunities';
       else if (headerString.includes('booking to delivery') || headerString.includes('model text 1')) type = 'bookings';
       else if (headerString.includes('lead id') || headerString.includes('qualification level')) type = 'leads';
-      else if (headerString.includes('vehicle identification number') || headerString.includes('grn date') || headerString.includes('engine number')) type = 'inventory'; 
+      else if (headerString.includes('engine number') || headerString.includes('grn date') || headerString.includes('chassis')) type = 'inventory'; 
 
       if (type === 'unknown') {
-        throw new Error("CSV structure not recognized. Please check headers.");
+        throw new Error("CSV structure not recognized. Ensure headers include 'Engine Number' or 'Lead ID'.");
       }
 
       await onDataImported(rows, type, overwrite);
@@ -266,7 +266,7 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) =>
              <input type="checkbox" id="overwrite" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500" />
              <label htmlFor="overwrite" className="text-[11px] font-bold text-slate-600 cursor-pointer">Overwrite Existing Data (Start Fresh)</label>
           </div>
-          <p className="text-[9px] text-slate-400 italic text-center">Auto-detection active. Inventory requires VIN or GRN Date.</p>
+          <p className="text-[9px] text-slate-400 italic text-center">Auto-detection active. Inventory requires Engine Number or GRN Date.</p>
         </div>
 
         <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 flex justify-end gap-2">
@@ -379,7 +379,7 @@ export default function App() {
              if (data) {
                 setter(data);
                 setTimestamps(prev => ({...prev, [key]: now}));
-                console.log(`Cloud Sync: ${data.length} records loaded from ${table}`);
+                console.log(`Cloud Sync: ${data.length} records from ${table}`);
              }
           };
 
@@ -450,21 +450,19 @@ export default function App() {
     const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     try {
       if (storageMode === 'cloud' && user) {
-         console.log(`Cloud Save Mode: Uploading ${newData.length} records to ${type}...`);
+         console.log(`Cloud Save Mode: Upserting ${newData.length} records to ${type}...`);
          if (overwrite) {
             await supabase.from(type).delete().eq('user_id', user.id);
          }
          const count = await uploadToSupabase(user.id, type, newData);
          setSuccessMsg(`Synced ${count} to Cloud`);
          
-         // Verification Fetch
          const { data } = await supabase.from(type).select('*').eq('user_id', user.id);
          if (type === 'opportunities') setOppData(data);
          else if (type === 'leads') setLeadData(data);
          else if (type === 'inventory') setInvData(data);
          else if (type === 'bookings') setBookingData(data);
       } else {
-         console.log(`Local Save Mode: Saving ${newData.length} records to Storage...`);
          let current = [];
          if (!overwrite) {
            if (type === 'opportunities') current = oppData;
@@ -510,9 +508,9 @@ export default function App() {
   // --- FILTERING ---
   const getFilteredData = (data, dataType) => {
     return data.filter(item => {
-      // Improved matching for inventory - handle both CSV and normalized SQL keys
+      // Improved matching - using Engine Number as fallback for Inventory
       if (dataType === 'inventory') {
-        const itemModel = getVal(item, ['modellinefe', 'model line', 'model', 'modelline', 'vehicleidentificationnumber']).trim();
+        const itemModel = getVal(item, ['modellinefe', 'model line', 'model', 'modelline', 'enginenumber']).trim();
         return filters.model === 'All' || itemModel === filters.model;
       }
 
@@ -543,8 +541,8 @@ export default function App() {
     if (!timeLabels.currLabel) return [];
     const getMonthData = (label) => filteredOppData.filter(d => getMonthStr(getVal(d, ['createdon', 'createddate'])) === label);
     const currData = getMonthData(timeLabels.currLabel);
-    const prevData = getMonthStr(timeLabels.prevLabel);
-    const prevDataset = filteredOppData.filter(d => getMonthStr(getVal(d, ['createdon', 'createddate'])) === prevData);
+    const prevLabel = timeLabels.prevLabel;
+    const prevDataset = filteredOppData.filter(d => getMonthStr(getVal(d, ['createdon', 'createddate'])) === prevLabel);
     
     const getMetrics = (data) => {
       const inquiries = data.length;
@@ -571,16 +569,17 @@ export default function App() {
   const inventoryStats = useMemo(() => {
     const total = filteredInvData.length;
     
-    const bookedVinSet = new Set(bookingData.map(b => getVal(b, ['vin', 'vehicle id no.', 'vehicleidno']).trim().toUpperCase()).filter(Boolean));
+    // Cross-checking Inventory vs Bookings using Engine Number
+    const bookedEngineSet = new Set(bookingData.map(b => getVal(b, ['engine number', 'enginenumber']).trim().toUpperCase()).filter(Boolean));
     const bookingModelTexts = bookingData.map(b => getVal(b, ['model text 1', 'modeltext1']).toLowerCase());
 
     const checkIsBooked = (d) => {
-      const vin = getVal(d, ['vin', 'vehicle identification number', 'vehicleidentificationnumber']).trim().toUpperCase();
+      const eng = getVal(d, ['engine number', 'enginenumber']).trim().toUpperCase();
       const salesOrder = getVal(d, ['Sales Order Number', 'salesordernumber']).trim();
       const modelCode = getVal(d, ['Model Sales Code', 'modelsalescode']).toLowerCase().trim();
 
       if (salesOrder) return true;
-      if (vin && bookedVinSet.has(vin)) return true;
+      if (eng && bookedEngineSet.has(eng)) return true;
       if (modelCode && bookingModelTexts.some(txt => txt.includes(modelCode))) return true;
 
       return false;
@@ -778,12 +777,12 @@ export default function App() {
        <div className="overflow-x-auto">
          <table className="w-full text-left text-[10px] text-slate-600">
            <thead className="bg-slate-50 text-slate-400 font-bold border-b border-slate-200 uppercase tracking-tighter">
-             <tr><th className="p-2">ID/VIN</th><th className="p-2">Customer/Vehicle</th><th className="p-2">Model</th><th className="p-2">Date</th><th className="p-2">Status</th></tr>
+             <tr><th className="p-2">ID/Engine</th><th className="p-2">Customer/Vehicle</th><th className="p-2">Model</th><th className="p-2">Date</th><th className="p-2">Status</th></tr>
            </thead>
            <tbody className="divide-y divide-slate-100">
              {[...oppData, ...leadData, ...invData].slice(0, 50).map((row, idx) => (
                <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                 <td className="p-2 font-mono text-slate-400 text-[8px]">{getVal(row, ['id', 'leadid', 'vin'])}</td>
+                 <td className="p-2 font-mono text-slate-400 text-[8px]">{getVal(row, ['id', 'leadid', 'enginenumber'])}</td>
                  <td className="p-2 font-semibold text-slate-800">{getVal(row, ['customer', 'name', 'model line']) || 'Record'}</td>
                  <td className="p-2">{getVal(row, ['modelline', 'model line', 'model'])}</td>
                  <td className="p-2">{getVal(row, ['createdon', 'createddate', 'grn date'])}</td>
