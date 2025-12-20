@@ -125,7 +125,11 @@ const parseCSV = (text) => {
     const values = parseLine(line);
     const row = {};
     headers.forEach((h, i) => { if (h) row[h] = values[i] || ''; });
-    rawHeaders.forEach((h, i) => { const key = h.trim(); if (key) row[key] = values[i] || ''; });
+    // Also keep raw names for better detection but standardized keys for DB
+    rawHeaders.forEach((h, i) => { 
+      const key = h.trim(); 
+      if (key) row[key] = values[i] || ''; 
+    });
     return row;
   });
 
@@ -136,7 +140,6 @@ const getVal = (d, keys) => {
   if (!d) return '';
   for(let k of keys) {
     if (d[k] !== undefined && d[k] !== null) return String(d[k]);
-    // Try lowercase versions
     const normalized = k.toLowerCase().replace(/ /g, '');
     if (d[normalized] !== undefined && d[normalized] !== null) return String(d[normalized]);
     const snake = k.toLowerCase().replace(/ /g, '_');
@@ -149,39 +152,37 @@ const getVal = (d, keys) => {
 const uploadToSupabase = async (userId, tableName, data) => {
   if (!supabase) throw new Error("Supabase client not initialized.");
   
-  // Clean records and ensure primary keys exist
   const records = data.map(item => {
-    const cleanItem = { user_id: userId };
+    const base = { user_id: userId };
     
-    // Explicitly mapping every field from CSV to a "normalized" key that should match SQL columns
+    // Normalize keys to lowercase for SQL column compatibility
     Object.keys(item).forEach(key => {
       const normalizedKey = key.toLowerCase().replace(/[\s_().-]/g, '');
-      cleanItem[normalizedKey] = item[key];
+      base[normalizedKey] = item[key];
     });
 
-    // Special key handling for persistence
+    // Ensure Identification Keys for Upsert Logic
     if (tableName === 'opportunities') {
-      cleanItem.id = getVal(item, ['id', 'opportunityid']);
+      base.id = getVal(item, ['id', 'opportunityid']);
     } else if (tableName === 'leads') {
-      cleanItem.leadid = getVal(item, ['leadid', 'lead id']);
+      base.leadid = getVal(item, ['leadid', 'lead id']);
     } else if (tableName === 'inventory') {
-      cleanItem.vin = getVal(item, ['vin', 'vehicle identification number']).trim().toUpperCase();
+      base.vin = getVal(item, ['vin', 'vehicle identification number']).trim().toUpperCase();
     } else if (tableName === 'bookings') {
-      cleanItem.vin = getVal(item, ['vin', 'vehicle id no.']).trim().toUpperCase();
+      base.vin = getVal(item, ['vin', 'vehicle id no.']).trim().toUpperCase();
     }
     
-    return cleanItem;
+    return base;
   });
 
   const conflictColumn = tableName === 'opportunities' ? 'id' : (tableName === 'leads' ? 'leadid' : 'vin');
 
-  // Perform bulk upsert
   const { error } = await supabase
     .from(tableName)
     .upsert(records, { onConflict: conflictColumn });
 
   if (error) {
-    console.error(`SQL Save Error (${tableName}):`, error);
+    console.error(`Save Error [${tableName}]:`, error);
     throw error;
   }
   return data.length;
@@ -227,10 +228,10 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) =>
       if (headerString.includes('opportunity offline score')) type = 'opportunities';
       else if (headerString.includes('booking to delivery') || headerString.includes('model text 1')) type = 'bookings';
       else if (headerString.includes('lead id') || headerString.includes('qualification level')) type = 'leads';
-      else if (headerString.includes('vehicle identification number') || headerString.includes('grn date')) type = 'inventory'; 
+      else if (headerString.includes('vehicle identification number') || headerString.includes('grn date') || headerString.includes('engine number')) type = 'inventory'; 
 
       if (type === 'unknown') {
-        throw new Error("File format not recognized. Please check headers.");
+        throw new Error("CSV structure not recognized. Please check headers.");
       }
 
       await onDataImported(rows, type, overwrite);
@@ -265,7 +266,7 @@ const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) =>
              <input type="checkbox" id="overwrite" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500" />
              <label htmlFor="overwrite" className="text-[11px] font-bold text-slate-600 cursor-pointer">Overwrite Existing Data (Start Fresh)</label>
           </div>
-          <p className="text-[9px] text-slate-400 italic text-center">Auto-detection active based on file headers.</p>
+          <p className="text-[9px] text-slate-400 italic text-center">Auto-detection active. Inventory requires VIN or GRN Date.</p>
         </div>
 
         <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 flex justify-end gap-2">
@@ -369,13 +370,16 @@ export default function App() {
       const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       if (storageMode === 'cloud' && user) {
         try {
-          // Robust Fetching: Adding error handling for each select
           const fetchAndSet = async (table, setter, key) => {
              const { data, error } = await supabase.from(table).select('*').eq('user_id', user.id);
-             if (error) throw error;
+             if (error) {
+               console.error(`Fetch Error [${table}]:`, error);
+               return;
+             }
              if (data) {
                 setter(data);
                 setTimestamps(prev => ({...prev, [key]: now}));
+                console.log(`Cloud Sync: ${data.length} records loaded from ${table}`);
              }
           };
 
@@ -386,7 +390,7 @@ export default function App() {
             fetchAndSet('bookings', setBookingData, 'bookings')
           ]);
         } catch (e) { 
-          console.error("Fetch Error:", e);
+          console.error("Critical Cloud Fetch Error:", e);
         }
       } else if (storageMode === 'local') {
         const savedOpp = localStorage.getItem('dashboard_oppData');
@@ -446,19 +450,21 @@ export default function App() {
     const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     try {
       if (storageMode === 'cloud' && user) {
+         console.log(`Cloud Save Mode: Uploading ${newData.length} records to ${type}...`);
          if (overwrite) {
             await supabase.from(type).delete().eq('user_id', user.id);
          }
          const count = await uploadToSupabase(user.id, type, newData);
          setSuccessMsg(`Synced ${count} to Cloud`);
          
-         // Re-fetch to confirm persistence
+         // Verification Fetch
          const { data } = await supabase.from(type).select('*').eq('user_id', user.id);
          if (type === 'opportunities') setOppData(data);
          else if (type === 'leads') setLeadData(data);
          else if (type === 'inventory') setInvData(data);
          else if (type === 'bookings') setBookingData(data);
       } else {
+         console.log(`Local Save Mode: Saving ${newData.length} records to Storage...`);
          let current = [];
          if (!overwrite) {
            if (type === 'opportunities') current = oppData;
@@ -477,8 +483,8 @@ export default function App() {
       setTimestamps(prev => ({...prev, [type]: now}));
       setTimeout(() => setSuccessMsg(''), 5000);
     } catch (e) {
-      console.error("Save Error:", e);
-      alert("Persistence Error: " + e.message);
+      console.error("Persistence Error:", e);
+      alert("Error: " + e.message);
     } finally {
       setIsUploading(false);
     }
@@ -504,19 +510,19 @@ export default function App() {
   // --- FILTERING ---
   const getFilteredData = (data, dataType) => {
     return data.filter(item => {
-      // Improved matching for inventory - handle both CSV and SQL keys
+      // Improved matching for inventory - handle both CSV and normalized SQL keys
       if (dataType === 'inventory') {
-        const itemModel = getVal(item, ['modellinefe', 'model line', 'model', 'modelline']).trim();
+        const itemModel = getVal(item, ['modellinefe', 'model line', 'model', 'modelline', 'vehicleidentificationnumber']).trim();
         return filters.model === 'All' || itemModel === filters.model;
       }
 
-      const itemLocs = [getVal(item, ['Dealer Code']), getVal(item, ['Branch Name']), getVal(item, ['city'])].map(v => v.trim()).filter(Boolean);
+      const itemLocs = [getVal(item, ['Dealer Code', 'dealercode']), getVal(item, ['Branch Name', 'branchname']), getVal(item, ['city'])].map(v => v.trim()).filter(Boolean);
       const matchLoc = filters.location === 'All' || itemLocs.includes(filters.location);
 
       const itemModel = getVal(item, ['modellinefe', 'model line', 'model', 'modelline']).trim();
       const matchModel = filters.model === 'All' || itemModel === filters.model;
 
-      const itemCons = getVal(item, ['Assigned To', 'owner']).trim();
+      const itemCons = getVal(item, ['Assigned To', 'owner', 'assignedto']).trim();
       const matchCons = filters.consultant === 'All' || itemCons === filters.consultant;
 
       return matchLoc && matchCons && matchModel;
@@ -528,8 +534,8 @@ export default function App() {
   const filteredInvData = useMemo(() => getFilteredData(invData, 'inventory'), [invData, filters]);
   
   const allDataForFilters = useMemo(() => [...oppData, ...leadData, ...invData], [oppData, leadData, invData]);
-  const locationOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['Dealer Code', 'city'])))].filter(Boolean).sort(), [allDataForFilters]);
-  const consultantOptions = useMemo(() => [...new Set(oppData.map(d => getVal(d, ['Assigned To'])))].filter(Boolean).sort(), [oppData]);
+  const locationOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['Dealer Code', 'city', 'dealercode'])))].filter(Boolean).sort(), [allDataForFilters]);
+  const consultantOptions = useMemo(() => [...new Set(oppData.map(d => getVal(d, ['Assigned To', 'assignedto'])))].filter(Boolean).sort(), [oppData]);
   const modelOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['modellinefe', 'model line', 'model', 'modelline'])))].filter(Boolean).sort(), [allDataForFilters]);
 
   // --- METRICS ---
@@ -537,18 +543,22 @@ export default function App() {
     if (!timeLabels.currLabel) return [];
     const getMonthData = (label) => filteredOppData.filter(d => getMonthStr(getVal(d, ['createdon', 'createddate'])) === label);
     const currData = getMonthData(timeLabels.currLabel);
-    const prevData = getMonthData(timeLabels.prevLabel);
+    const prevData = getMonthStr(timeLabels.prevLabel);
+    const prevDataset = filteredOppData.filter(d => getMonthStr(getVal(d, ['createdon', 'createddate'])) === prevData);
+    
     const getMetrics = (data) => {
       const inquiries = data.length;
       const testDrives = data.filter(d => ['yes', 'completed', 'done'].includes((getVal(d, ['testdrivecompleted']) || '').toLowerCase())).length;
       const hotLeads = data.filter(d => parseInt(getVal(d, ['opportunityofflinescore']) || '0') > 80 || (getVal(d, ['zqualificationlevel', 'status']) || '').toLowerCase().includes('hot')).length;
-      const bookings = data.filter(d => (getVal(d, ['ordernumber']) || '').trim() !== '').length;
-      const retails = data.filter(d => (getVal(d, ['invoicedatev', 'GST Invoice No.']) || '').trim() !== '').length;
+      const bookings = data.filter(d => (getVal(d, ['ordernumber', 'salesorder']) || '').trim() !== '').length;
+      const retails = data.filter(d => (getVal(d, ['invoicedatev', 'gstinvoiceno']) || '').trim() !== '').length;
       return { inquiries, testDrives, hotLeads, bookings, retails };
     };
+
     const c = getMetrics(currData);
-    const p = getMetrics(prevData);
+    const p = getMetrics(prevDataset);
     const calcPct = (num, den) => den > 0 ? Math.round((num / den) * 100) + '%' : '0%';
+    
     return [
       { label: 'Total Inquiries', v1: p.inquiries, sub1: '100%', v2: c.inquiries, sub2: '100%' },
       { label: 'Test-drives Done', v1: p.testDrives, sub1: calcPct(p.testDrives, p.inquiries), v2: c.testDrives, sub2: calcPct(c.testDrives, c.inquiries) },
@@ -561,13 +571,13 @@ export default function App() {
   const inventoryStats = useMemo(() => {
     const total = filteredInvData.length;
     
-    const bookedVinSet = new Set(bookingData.map(b => getVal(b, ['vin', 'vehicle id no.']).trim().toUpperCase()).filter(Boolean));
-    const bookingModelTexts = bookingData.map(b => getVal(b, ['model text 1']).toLowerCase());
+    const bookedVinSet = new Set(bookingData.map(b => getVal(b, ['vin', 'vehicle id no.', 'vehicleidno']).trim().toUpperCase()).filter(Boolean));
+    const bookingModelTexts = bookingData.map(b => getVal(b, ['model text 1', 'modeltext1']).toLowerCase());
 
     const checkIsBooked = (d) => {
-      const vin = getVal(d, ['vin', 'vehicle identification number']).trim().toUpperCase();
-      const salesOrder = getVal(d, ['Sales Order Number']).trim();
-      const modelCode = getVal(d, ['Model Sales Code']).toLowerCase().trim();
+      const vin = getVal(d, ['vin', 'vehicle identification number', 'vehicleidentificationnumber']).trim().toUpperCase();
+      const salesOrder = getVal(d, ['Sales Order Number', 'salesordernumber']).trim();
+      const modelCode = getVal(d, ['Model Sales Code', 'modelsalescode']).toLowerCase().trim();
 
       if (salesOrder) return true;
       if (vin && bookedVinSet.has(vin)) return true;
@@ -581,11 +591,11 @@ export default function App() {
 
     const currentMonthLabel = timeLabels.currLabel;
     const openingStock = filteredInvData.filter(d => {
-      const month = getMonthStr(getVal(d, ['GRN Date']));
+      const month = getMonthStr(getVal(d, ['GRN Date', 'grndate']));
       return month !== currentMonthLabel && !checkIsBooked(d);
     }).length;
 
-    const ageing90 = filteredInvData.filter(d => parseInt(getVal(d, ['Ageing Days']) || '0') > 90).length;
+    const ageing90 = filteredInvData.filter(d => parseInt(getVal(d, ['Ageing Days', 'ageingdays', 'ageing']) || '0') > 90).length;
 
     return [
       { label: 'Total Inventory', v1: 0, v2: total },
@@ -676,7 +686,7 @@ export default function App() {
   const DetailedView = () => {
     const consultantMix = useMemo(() => {
         const counts = {};
-        filteredOppData.forEach(d => { const c = getVal(d, ['Assigned To', 'owner']); if(c) counts[c] = (counts[c] || 0) + 1; });
+        filteredOppData.forEach(d => { const c = getVal(d, ['Assigned To', 'owner', 'assignedto']); if(c) counts[c] = (counts[c] || 0) + 1; });
         return Object.entries(counts).map(([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value).slice(0, 10);
     }, [filteredOppData]);
 
