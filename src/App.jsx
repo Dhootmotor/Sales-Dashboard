@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Upload, Filter, TrendingUp, TrendingDown, 
   Users, Car, DollarSign, ChevronDown, FileSpreadsheet, 
   ArrowUpRight, ArrowDownRight, 
-  Clock, X, CheckCircle, Download, Trash2, Calendar, AlertTriangle, Database, HardDrive, UserCheck
+  Clock, X, CheckCircle, Download, Trash2, Calendar, AlertTriangle, Database, HardDrive, UserCheck, RefreshCw, DatabaseBackup
 } from 'lucide-react';
 
 /**
@@ -111,8 +111,8 @@ const parseCSV = (text) => {
   let headerIndex = 0;
   for (let i = 0; i < Math.min(lines.length, 20); i++) {
     const rawLine = lines[i].toLowerCase();
-    // Headers specific to EXPORT Inventory: 'Model Line', 'Engine Number', 'GRN Date'
-    const keywords = ['id', 'lead id', 'order number', 'vin', 'engine number', 'grn date'];
+    // Broaden detection for specific file headers provided
+    const keywords = ['id', 'lead id', 'order number', 'vin', 'engine number', 'engine code', 'grn date'];
     if (keywords.some(k => rawLine.includes(k))) {
       headerIndex = i;
       break;
@@ -126,9 +126,10 @@ const parseCSV = (text) => {
     const values = parseLine(line);
     const row = {};
     headers.forEach((h, i) => { if (h) row[h] = values[i] || ''; });
-    rawHeaders.forEach((h, i) => { 
-      const key = h.trim(); 
-      if (key) row[key] = values[i] || ''; 
+    // Also include normalized keys that might contain spaces
+    rawHeaders.forEach((h, i) => {
+        const key = h.trim().toLowerCase();
+        if (key && !row[key]) row[key] = values[i] || '';
     });
     return row;
   });
@@ -139,11 +140,9 @@ const parseCSV = (text) => {
 const getVal = (d, keys) => {
   if (!d) return '';
   for(let k of keys) {
+    const key = k.toLowerCase().replace(/[\s_().-]/g, '');
+    if (d[key] !== undefined && d[key] !== null) return String(d[key]);
     if (d[k] !== undefined && d[k] !== null) return String(d[k]);
-    const normalized = k.toLowerCase().replace(/ /g, '');
-    if (d[normalized] !== undefined && d[normalized] !== null) return String(d[normalized]);
-    const snake = k.toLowerCase().replace(/ /g, '_');
-    if (d[snake] !== undefined && d[snake] !== null) return String(d[snake]);
   }
   return '';
 };
@@ -153,182 +152,61 @@ const uploadToSupabase = async (userId, tableName, data) => {
   if (!supabase) throw new Error("Supabase client not initialized.");
   
   const records = data.map(item => {
-    // We save the raw columns mapped to normalized SQL-friendly keys
     const base = { user_id: userId };
     
-    // Auto-map all CSV keys to lowercase-no-space keys for SQL compatibility
-    Object.keys(item).forEach(key => {
-      const normalizedKey = key.toLowerCase().replace(/[\s_().-]/g, '');
-      if (normalizedKey && normalizedKey !== 'user_id') {
-        base[normalizedKey] = item[key];
-      }
-    });
-
-    // Ensure identification columns are strictly set based on the table requirements
-    if (tableName === 'opportunities') {
+    if (tableName === 'inventory') {
+      // Mapping from EXPORT Inventory.csv
+      base.enginenumber = getVal(item, ['enginenumber', 'engine number']).trim().toUpperCase();
+      base.modelline = getVal(item, ['modelline', 'model line']);
+      base.modelsalescode = getVal(item, ['modelsalescode', 'model sales code']);
+      base.vehicleidentificationnumber = getVal(item, ['vehicleidentificationnumber', 'vin']);
+      base.grndate = getVal(item, ['grndate', 'grn date']);
+      base.ageingdays = getVal(item, ['ageingdays', 'ageing days']);
+      base.salesordernumber = getVal(item, ['salesordernumber', 'sales order number']);
+      base.gstinvoiceno = getVal(item, ['gstinvoiceno', 'gst invoice no']);
+      base.colordescription = getVal(item, ['colordescription', 'color description']);
+    } else if (tableName === 'opportunities') {
       base.id = getVal(item, ['id', 'opportunityid']);
+      base.customer = getVal(item, ['customer', 'customername']);
+      base.modelline = getVal(item, ['modelline', 'model line']);
+      base.createdon = getVal(item, ['createdon', 'createddate']);
+      base.testdrivecompleted = getVal(item, ['testdrivecompleted']);
+      base.ordernumber = getVal(item, ['ordernumber', 'salesordernumber', 'sales order number']);
+      base.assignedto = getVal(item, ['assignedto', 'owner']);
     } else if (tableName === 'leads') {
       base.leadid = getVal(item, ['leadid', 'lead id']);
-    } else if (tableName === 'inventory') {
-      // Using Engine Number as the unique ID for Inventory to avoid VIN matching issues
-      base.enginenumber = getVal(item, ['Engine Number', 'enginenumber']).trim().toUpperCase();
+      base.name = getVal(item, ['name', 'customer']);
+      base.source = getVal(item, ['source']);
+      base.qualificationlevel = getVal(item, ['qualificationlevel']);
     } else if (tableName === 'bookings') {
-      base.enginenumber = getVal(item, ['Engine Number', 'enginenumber']).trim().toUpperCase();
+      // Mapping from EXPORT- Booking to delivery data.csv
+      // Note: Header is 'Engine Code' in this file
+      base.enginenumber = getVal(item, ['enginecode', 'engine code', 'enginenumber', 'engine number']).trim().toUpperCase();
+      base.modeltext1 = getVal(item, ['modeltext1', 'model text 1']);
+      base.ordernumber = getVal(item, ['invoice number', 'invoicenumber', 'ordernumber', 'sales order number']);
+      base.vin = getVal(item, ['vehicleidno', 'vehicle id no']);
     }
     
     return base;
   });
 
+  // Filter out records without valid IDs
+  const validRecords = records.filter(r => 
+    tableName === 'opportunities' ? r.id : (tableName === 'leads' ? r.leadid : r.enginenumber)
+  );
+
   const conflictColumn = tableName === 'opportunities' ? 'id' : (tableName === 'leads' ? 'leadid' : 'enginenumber');
 
-  // Upsert into Supabase
   const { error } = await supabase
     .from(tableName)
-    .upsert(records, { onConflict: conflictColumn });
+    .upsert(validRecords, { onConflict: conflictColumn });
 
   if (error) {
-    console.error(`SQL Upsert Error [${tableName}]:`, error);
-    throw error;
+    console.error(`Supabase persistence failed for ${tableName}:`, error);
+    throw new Error(`${tableName} Sync Failed: ${error.message}`);
   }
-  return data.length;
+  return validRecords.length;
 };
-
-const mergeLocalData = (currentData, newData, type) => {
-  const getKey = (item) => {
-    if (type === 'opportunities') return getVal(item, ['id', 'opportunityid']);
-    if (type === 'leads') return getVal(item, ['leadid', 'lead id']);
-    if (type === 'inventory') return getVal(item, ['Engine Number', 'enginenumber']).trim().toUpperCase();
-    if (type === 'bookings') return getVal(item, ['Engine Number', 'enginenumber']).trim().toUpperCase();
-    return Math.random().toString();
-  };
-
-  const mergedMap = new Map(currentData.map(item => [getKey(item), item]));
-  newData.forEach(item => {
-    const key = getKey(item);
-    if (key) mergedMap.set(key, item);
-  });
-  return Array.from(mergedMap.values());
-};
-
-// --- COMPONENTS ---
-const ImportWizard = ({ isOpen, onClose, onDataImported, isUploading, mode }) => {
-  const [file, setFile] = useState(null);
-  const [overwrite, setOverwrite] = useState(false);
-  
-  const handleFileChange = (e) => { if (e.target.files[0]) setFile(e.target.files[0]); };
-
-  const processFiles = async () => {
-    if (!file) return;
-    const readFile = (f) => new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = (e) => resolve(parseCSV(e.target.result));
-      reader.readAsText(f);
-    });
-
-    try {
-      const { rows, rawHeaders } = await readFile(file);
-      const headerString = rawHeaders.join(',').toLowerCase();
-      let type = 'unknown';
-      
-      if (headerString.includes('opportunity offline score')) type = 'opportunities';
-      else if (headerString.includes('booking to delivery') || headerString.includes('model text 1')) type = 'bookings';
-      else if (headerString.includes('lead id') || headerString.includes('qualification level')) type = 'leads';
-      // Detecting inventory specifically from headers in 'EXPORT Inventory.csv'
-      else if (headerString.includes('model line') && headerString.includes('engine number')) type = 'inventory'; 
-
-      if (type === 'unknown') {
-        throw new Error("File structure not recognized. Please ensure headers like 'Engine Number' or 'Lead ID' are present.");
-      }
-
-      await onDataImported(rows, type, overwrite);
-      setFile(null);
-      onClose();
-    } catch (error) {
-      alert("Error processing file: " + error.message);
-    }
-  };
-
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center backdrop-blur-sm px-4">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-fade-in border border-slate-200">
-        <div className="bg-slate-900 px-5 py-3 flex justify-between items-center">
-          <h2 className="text-white font-bold text-sm flex items-center gap-2">
-            <Upload className="w-4 h-4 text-blue-400" />
-            Import Master Data
-          </h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
-        </div>
-        
-        <div className="p-5 space-y-4">
-          <div className="border-2 border-dashed border-slate-200 rounded-xl p-8 hover:border-blue-500 transition-all bg-slate-50 relative group flex flex-col items-center justify-center text-center cursor-pointer">
-                <FileSpreadsheet className="w-8 h-8 text-blue-600 mb-2" /> 
-                <div className="text-slate-900 font-bold text-sm">{file ? file.name : "Select CSV to Upload"}</div>
-                <input type="file" accept=".csv" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onChange={handleFileChange} />
-          </div>
-
-          <div className="flex items-center gap-2 bg-slate-50 p-2 rounded-lg border border-slate-100">
-             <input type="checkbox" id="overwrite" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500" />
-             <label htmlFor="overwrite" className="text-[11px] font-bold text-slate-600 cursor-pointer">Overwrite Existing Data (Start Fresh)</label>
-          </div>
-          <p className="text-[9px] text-slate-400 italic text-center">Auto-detection active. Recognized headers: Model Line, Engine Number, Lead ID.</p>
-        </div>
-
-        <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 flex justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-200 rounded-lg">Cancel</button>
-          <button onClick={processFiles} disabled={isUploading || !file} className={`px-5 py-1.5 text-[11px] font-bold text-white rounded-lg transition-all ${isUploading || !file ? 'bg-slate-400' : 'bg-blue-600 hover:bg-blue-700'}`}>
-            {isUploading ? 'Importing...' : 'Sync System'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const ComparisonTable = ({ rows, headers, updatedAt }) => (
-  <div className="flex flex-col h-full overflow-hidden">
-    <table className="w-full text-xs text-left border-separate border-spacing-0">
-      <thead className="text-[9px] uppercase text-slate-400 bg-slate-50/50 font-bold tracking-wider sticky top-0">
-        <tr>
-          <th className="py-1 pl-2 w-[35%] border-b border-slate-100">Metric</th>
-          <th className="py-1 text-right w-[15%] px-1 border-l border-b border-slate-100/50">{headers[0] || 'Prv'}</th>
-          <th className="py-1 text-right w-[15%] px-1 text-slate-300 border-b border-slate-100">%</th>
-          <th className="py-1 text-right w-[15%] px-1 border-l border-b border-slate-100/50">{headers[1] || 'Cur'}</th>
-          <th className="py-1 text-right w-[15%] px-1 text-blue-400 border-b border-slate-100">%</th>
-        </tr>
-      </thead>
-      <tbody className="divide-y divide-slate-50">
-        {rows.map((row, idx) => {
-          const v1 = row.v1 || 0;
-          const v2 = row.v2 || 0;
-          const isUp = v2 >= v1;
-          const format = (val, type) => {
-             if (type === 'currency') return `₹${(val/100000).toFixed(1)}L`;
-             return val.toLocaleString();
-          };
-
-          return (
-            <tr key={idx} className="hover:bg-slate-50/80 transition-colors group">
-              <td className="py-1 pl-2 font-medium text-slate-600 flex items-center gap-1 truncate border-r border-slate-50/30">
-                 {isUp ? <ArrowUpRight className="w-2.5 h-2.5 text-emerald-500 shrink-0" /> : <ArrowDownRight className="w-2.5 h-2.5 text-rose-500 shrink-0" />}
-                 <span className="truncate text-[11px]" title={row.label}>{row.label}</span>
-              </td>
-              <td className="py-1 text-right text-slate-500 font-mono text-[10px] px-1">{format(v1, row.type)}</td>
-              <td className="py-1 text-right text-slate-300 text-[8px] px-1">{row.sub1 || '-'}</td>
-              <td className="py-1 text-right font-bold text-slate-900 font-mono text-[10px] px-1 border-l border-slate-50/50">{format(v2, row.type)}</td>
-              <td className="py-1 text-right text-blue-600 font-bold text-[9px] px-1">{row.sub2 || '-'}</td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
-    <div className="mt-auto pt-1.5 border-t border-slate-100 flex items-center justify-end px-1 text-[8px] text-slate-800 gap-1 font-bold uppercase tracking-tighter">
-       <Clock className="w-2 h-2" />
-       <span>Refreshed: {updatedAt || 'Ready'}</span>
-    </div>
-  </div>
-);
 
 // --- MAIN APPLICATION ---
 export default function App() {
@@ -338,13 +216,7 @@ export default function App() {
   const [invData, setInvData] = useState([]);
   const [bookingData, setBookingData] = useState([]);
   
-  const [timestamps, setTimestamps] = useState({
-    opportunities: null,
-    leads: null,
-    inventory: null,
-    bookings: null
-  });
-
+  const [timestamps, setTimestamps] = useState({ opportunities: null, leads: null, inventory: null, bookings: null });
   const [showImport, setShowImport] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [viewMode, setViewMode] = useState('dashboard'); 
@@ -361,83 +233,76 @@ export default function App() {
         setUser(session?.user || null);
       };
       initAuth();
-      const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-        setUser(session?.user || null);
-      });
+      const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => setUser(session?.user || null));
       return () => subscription.unsubscribe();
-    } else {
-      setStorageMode('local');
     }
   }, []);
 
   // --- DATA FETCHING ---
-  useEffect(() => {
-    const loadData = async () => {
-      const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      if (storageMode === 'cloud' && user) {
-        try {
-          const fetchAndSet = async (table, setter, key) => {
-             const { data, error } = await supabase.from(table).select('*').eq('user_id', user.id);
-             if (error) {
-               console.error(`Fetch Error [${table}]:`, error);
-               return;
-             }
-             if (data) {
-                setter(data);
-                setTimestamps(prev => ({...prev, [key]: now}));
-                console.log(`Cloud Data Loaded [${table}]: ${data.length} records.`);
-             }
-          };
-
-          await Promise.all([
-            fetchAndSet('opportunities', setOppData, 'opportunities'),
-            fetchAndSet('leads', setLeadData, 'leads'),
-            fetchAndSet('inventory', setInvData, 'inventory'),
-            fetchAndSet('bookings', setBookingData, 'bookings')
-          ]);
-        } catch (e) { 
-          console.error("Critical Cloud Fetch Error:", e);
+  const loadCloudData = async () => {
+    if (!user) return;
+    const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    try {
+      const fetchSet = async (table, setter, key) => {
+        const { data, error } = await supabase.from(table).select('*').eq('user_id', user.id);
+        if (error) throw error;
+        if (data) {
+          setter(data);
+          setTimestamps(prev => ({ ...prev, [key]: now }));
+          console.log(`[Persistence] Loaded ${data.length} records for ${table}`);
         }
-      } else if (storageMode === 'local') {
-        const savedOpp = localStorage.getItem('dashboard_oppData');
-        const savedLead = localStorage.getItem('dashboard_leadData');
-        const savedInv = localStorage.getItem('dashboard_invData');
-        const savedBks = localStorage.getItem('dashboard_bookingData');
-        if (savedOpp) setOppData(JSON.parse(savedOpp));
-        if (savedLead) setLeadData(JSON.parse(savedLead));
-        if (savedInv) setInvData(JSON.parse(savedInv));
-        if (savedBks) setBookingData(JSON.parse(savedBks));
-        setTimestamps(prev => ({...prev, opportunities: now, leads: now, inventory: now, bookings: now}));
-      }
-    };
-    loadData();
+      };
+      await Promise.all([
+        fetchSet('opportunities', setOppData, 'opportunities'),
+        fetchSet('leads', setLeadData, 'leads'),
+        fetchSet('inventory', setInvData, 'inventory'),
+        fetchSet('bookings', setBookingData, 'bookings')
+      ]);
+    } catch (e) { 
+        console.error("Persistence Load Error:", e);
+        setSuccessMsg(`Fetch Error: ${e.message}`);
+    }
+  };
+
+  useEffect(() => {
+    if (storageMode === 'cloud' && user) {
+      loadCloudData();
+    } else if (storageMode === 'local') {
+      const savedOpp = localStorage.getItem('dashboard_oppData');
+      const savedLead = localStorage.getItem('dashboard_leadData');
+      const savedInv = localStorage.getItem('dashboard_invData');
+      const savedBks = localStorage.getItem('dashboard_bookingData');
+      if (savedOpp) setOppData(JSON.parse(savedOpp));
+      if (savedLead) setLeadData(JSON.parse(savedLead));
+      if (savedInv) setInvData(JSON.parse(savedInv));
+      if (savedBks) setBookingData(JSON.parse(savedBks));
+    }
   }, [user, storageMode]);
 
   // --- DATE HELPERS ---
   const getDateObj = (dateStr) => {
-      if (!dateStr) return new Date(0);
-      let d = new Date(dateStr);
+    if (!dateStr) return new Date(0);
+    let d = new Date(dateStr);
+    if (!isNaN(d.getTime())) return d;
+    const parts = String(dateStr).match(/(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+    if (parts) {
+      d = new Date(parts[3], parts[2] - 1, parts[1]);
       if (!isNaN(d.getTime())) return d;
-      const parts = String(dateStr).match(/(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
-      if (parts) {
-         d = new Date(parts[3], parts[2] - 1, parts[1]);
-         if (!isNaN(d.getTime())) return d;
-      }
-      return new Date(0);
+    }
+    return new Date(0);
   };
 
   const getMonthStr = (dateStr) => {
     const d = getDateObj(dateStr);
-    if (d.getTime() === 0) return 'Unknown';
-    return d.toLocaleString('default', { month: 'short', year: '2-digit' });
+    return d.getTime() === 0 ? 'Unknown' : d.toLocaleString('default', { month: 'short', year: '2-digit' });
   };
 
   const timeLabels = useMemo(() => {
     if (oppData.length === 0) return { prevLabel: 'Prv', currLabel: 'Cur' };
     let maxDate = new Date(0);
     oppData.forEach(d => {
-        const date = getDateObj(getVal(d, ['createdon', 'createddate']));
-        if (date > maxDate) maxDate = date;
+      const date = getDateObj(getVal(d, ['createdon']));
+      if (date > maxDate) maxDate = date;
     });
     if (maxDate.getTime() === 0) return { prevLabel: 'Prv', currLabel: 'Cur' };
     const currMonth = maxDate; 
@@ -453,83 +318,40 @@ export default function App() {
   // --- UPLOAD HANDLER ---
   const handleDataImport = async (newData, type, overwrite) => {
     setIsUploading(true);
-    const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     try {
       if (storageMode === 'cloud' && user) {
-         console.log(`Saving to SQL: ${type}...`);
-         if (overwrite) {
-            await supabase.from(type).delete().eq('user_id', user.id);
-         }
-         const count = await uploadToSupabase(user.id, type, newData);
-         setSuccessMsg(`Synced ${count} to Cloud`);
-         
-         // Final Refresh
-         const { data } = await supabase.from(type).select('*').eq('user_id', user.id);
-         if (type === 'opportunities') setOppData(data);
-         else if (type === 'leads') setLeadData(data);
-         else if (type === 'inventory') setInvData(data);
-         else if (type === 'bookings') setBookingData(data);
+        if (overwrite) await supabase.from(type).delete().eq('user_id', user.id);
+        const count = await uploadToSupabase(user.id, type, newData);
+        setSuccessMsg(`SQL Sync Successful: ${count} records saved.`);
+        await loadCloudData(); 
       } else {
-         let current = [];
-         if (!overwrite) {
-           if (type === 'opportunities') current = oppData;
-           else if (type === 'leads') current = leadData;
-           else if (type === 'inventory') current = invData;
-           else if (type === 'bookings') current = bookingData;
-         }
-         const merged = mergeLocalData(current, newData, type);
-         localStorage.setItem(`dashboard_${type}Data`, JSON.stringify(merged));
-         if (type === 'opportunities') setOppData(merged);
-         else if (type === 'leads') setLeadData(merged);
-         else if (type === 'inventory') setInvData(merged);
-         else if (type === 'bookings') setBookingData(merged);
-         setSuccessMsg(`Saved locally (${newData.length} items)`);
+        localStorage.setItem(`dashboard_${type}Data`, JSON.stringify(newData));
+        if (type === 'opportunities') setOppData(newData);
+        else if (type === 'leads') setLeadData(newData);
+        else if (type === 'inventory') setInvData(newData);
+        else if (type === 'bookings') setBookingData(newData);
+        setSuccessMsg(`Saved Locally: ${newData.length} records.`);
       }
-      setTimestamps(prev => ({...prev, [type]: now}));
       setTimeout(() => setSuccessMsg(''), 5000);
     } catch (e) {
-      console.error("Save Failure:", e);
-      alert("Error saving data: " + e.message);
-    } finally {
-      setIsUploading(false);
-    }
-  };
-
-  const clearData = async () => {
-    if(window.confirm("Delete all dashboard records?")) {
-       if (storageMode === 'cloud' && user) {
-          await Promise.all([
-            supabase.from('opportunities').delete().eq('user_id', user.id),
-            supabase.from('leads').delete().eq('user_id', user.id),
-            supabase.from('inventory').delete().eq('user_id', user.id),
-            supabase.from('bookings').delete().eq('user_id', user.id)
-          ]);
-       } else {
-          localStorage.clear();
-       }
-       setOppData([]); setLeadData([]); setInvData([]); setBookingData([]);
-       setTimestamps({opportunities: null, leads: null, inventory: null, bookings: null});
-    }
+      console.error("Sync Error:", e);
+      alert("Sync Failure: " + e.message);
+    } finally { setIsUploading(false); }
   };
 
   // --- FILTERING ---
   const getFilteredData = (data, dataType) => {
     return data.filter(item => {
-      // Filtering logic for display
       if (dataType === 'inventory') {
-        const itemModel = getVal(item, ['modelline', 'model line', 'model']).trim();
+        const itemModel = getVal(item, ['modelline']).trim();
         return filters.model === 'All' || itemModel === filters.model;
       }
-
-      const itemLocs = [getVal(item, ['Dealer Code', 'dealercode']), getVal(item, ['Branch Name', 'branchname']), getVal(item, ['city'])].map(v => v.trim()).filter(Boolean);
+      const itemLocs = [getVal(item, ['dealercode']), getVal(item, ['branchname']), getVal(item, ['city'])].map(v => v.trim()).filter(Boolean);
       const matchLoc = filters.location === 'All' || itemLocs.includes(filters.location);
-
-      const itemModel = getVal(item, ['modellinefe', 'model line', 'model', 'modelline']).trim();
+      const itemModel = getVal(item, ['modelline']).trim();
       const matchModel = filters.model === 'All' || itemModel === filters.model;
-
-      const itemCons = getVal(item, ['Assigned To', 'owner', 'assignedto']).trim();
+      const itemCons = getVal(item, ['assignedto']).trim();
       const matchCons = filters.consultant === 'All' || itemCons === filters.consultant;
-
       return matchLoc && matchCons && matchModel;
     });
   };
@@ -538,79 +360,50 @@ export default function App() {
   const filteredLeadData = useMemo(() => getFilteredData(leadData, 'leads'), [leadData, filters]);
   const filteredInvData = useMemo(() => getFilteredData(invData, 'inventory'), [invData, filters]);
   
-  const allDataForFilters = useMemo(() => [...oppData, ...leadData, ...invData], [oppData, leadData, invData]);
-  const locationOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['Dealer Code', 'dealercode', 'city'])))].filter(Boolean).sort(), [allDataForFilters]);
-  const consultantOptions = useMemo(() => [...new Set(oppData.map(d => getVal(d, ['Assigned To', 'assignedto', 'owner'])))].filter(Boolean).sort(), [oppData]);
-  const modelOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['modelline', 'model line', 'modellinefe'])))].filter(Boolean).sort(), [allDataForFilters]);
+  const locationOptions = useMemo(() => [...new Set([...oppData, ...leadData].map(d => getVal(d, ['dealercode', 'city'])))].filter(Boolean).sort(), [oppData, leadData]);
+  const consultantOptions = useMemo(() => [...new Set(oppData.map(d => getVal(d, ['assignedto'])))].filter(Boolean).sort(), [oppData]);
+  const modelOptions = useMemo(() => [...new Set([...oppData, ...invData].map(d => getVal(d, ['modelline'])))].filter(Boolean).sort(), [oppData, invData]);
 
   // --- METRICS ---
   const funnelStats = useMemo(() => {
     if (!timeLabels.currLabel) return [];
-    const getMonthData = (label) => filteredOppData.filter(d => getMonthStr(getVal(d, ['createdon', 'createddate'])) === label);
+    const getMonthData = (label) => filteredOppData.filter(d => getMonthStr(getVal(d, ['createdon'])) === label);
     const currData = getMonthData(timeLabels.currLabel);
-    const prevLabel = timeLabels.prevLabel;
-    const prevDataset = filteredOppData.filter(d => getMonthStr(getVal(d, ['createdon', 'createddate'])) === prevLabel);
-    
-    const getMetrics = (data) => {
-      const inquiries = data.length;
-      const testDrives = data.filter(d => ['yes', 'completed', 'done'].includes((getVal(d, ['testdrivecompleted']) || '').toLowerCase())).length;
-      const hotLeads = data.filter(d => parseInt(getVal(d, ['opportunityofflinescore']) || '0') > 80 || (getVal(d, ['zqualificationlevel', 'status']) || '').toLowerCase().includes('hot')).length;
-      const bookings = data.filter(d => (getVal(d, ['ordernumber', 'salesorder', 'salesordernumber']) || '').trim() !== '').length;
-      const retails = data.filter(d => (getVal(d, ['gstinvoiceno', 'gst invoice no', 'invoicedatev']) || '').trim() !== '').length;
-      return { inquiries, testDrives, hotLeads, bookings, retails };
-    };
-
+    const prevDataset = filteredOppData.filter(d => getMonthStr(getVal(d, ['createdon'])) === timeLabels.prevLabel);
+    const getMetrics = (data) => ({
+      inquiries: data.length,
+      testDrives: data.filter(d => ['yes', 'completed', 'done'].includes((getVal(d, ['testdrivecompleted']) || '').toLowerCase())).length,
+      hotLeads: data.filter(d => parseInt(getVal(d, ['opportunityofflinescore']) || '0') > 80).length,
+      bookings: data.filter(d => (getVal(d, ['ordernumber']) || '').trim() !== '').length,
+      retails: data.filter(d => (getVal(d, ['gstinvoiceno']) || '').trim() !== '').length,
+    });
     const c = getMetrics(currData);
     const p = getMetrics(prevDataset);
     const calcPct = (num, den) => den > 0 ? Math.round((num / den) * 100) + '%' : '0%';
-    
     return [
       { label: 'Total Inquiries', v1: p.inquiries, sub1: '100%', v2: c.inquiries, sub2: '100%' },
       { label: 'Test-drives Done', v1: p.testDrives, sub1: calcPct(p.testDrives, p.inquiries), v2: c.testDrives, sub2: calcPct(c.testDrives, c.inquiries) },
       { label: 'Hot Lead Pool', v1: p.hotLeads, sub1: calcPct(p.hotLeads, p.inquiries), v2: c.hotLeads, sub2: calcPct(c.hotLeads, c.inquiries) },
-      { label: 'Booking Conversion', v1: p.bookings, sub1: calcPct(p.bookings, p.inquiries), v2: c.bookings, sub2: calcPct(c.bookings, c.inquiries) },
-      { label: 'Retail Conversion', v1: p.retails, sub1: calcPct(p.retails, p.inquiries), v2: c.retails, sub2: calcPct(c.retails, c.inquiries) },
+      { label: 'Booking Conv.', v1: p.bookings, sub1: calcPct(p.bookings, p.inquiries), v2: c.bookings, sub2: calcPct(c.bookings, c.inquiries) },
+      { label: 'Retail Conv.', v1: p.retails, sub1: calcPct(p.retails, p.inquiries), v2: c.retails, sub2: calcPct(c.retails, c.inquiries) },
     ];
   }, [filteredOppData, timeLabels]);
 
   const inventoryStats = useMemo(() => {
-    // Inventory logic: Calculations handled on-the-fly for display
     const total = filteredInvData.length;
-    
-    // Engine Numbers of booked vehicles (using bookings cross-reference)
-    const bookedEngineSet = new Set(bookingData.map(b => getVal(b, ['engine number', 'enginenumber']).trim().toUpperCase()).filter(Boolean));
-    const bookingModelTexts = bookingData.map(b => getVal(b, ['model text 1', 'modeltext1']).toLowerCase());
-
+    // Handle Engine Code mapping correctly for bookings
+    const bookedEngineSet = new Set(bookingData.map(b => getVal(b, ['enginenumber']).trim().toUpperCase()).filter(Boolean));
     const checkIsBooked = (d) => {
-      const eng = getVal(d, ['engine number', 'enginenumber']).trim().toUpperCase();
-      const salesOrder = getVal(d, ['Sales Order Number', 'salesordernumber']).trim();
-      const gstInvoice = getVal(d, ['GST Invoice No.', 'gstinvoiceno']).trim();
-      const modelCode = getVal(d, ['Model Sales Code', 'modelsalescode']).toLowerCase().trim();
-
-      // Logic: If there is an invoice or sales order, or it exists in the bookings table
-      if (salesOrder || gstInvoice) return true;
-      if (eng && bookedEngineSet.has(eng)) return true;
-      if (modelCode && bookingModelTexts.some(txt => txt.includes(modelCode))) return true;
-
-      return false;
+      const eng = getVal(d, ['enginenumber']).trim().toUpperCase();
+      return getVal(d, ['salesordernumber']) || getVal(d, ['gstinvoiceno']) || (eng && bookedEngineSet.has(eng));
     };
-
     const bookedCount = filteredInvData.filter(checkIsBooked).length;
-    const openCount = total - bookedCount;
-
-    const currentMonthLabel = timeLabels.currLabel;
-    const openingStock = filteredInvData.filter(d => {
-      const month = getMonthStr(getVal(d, ['GRN Date', 'grndate']));
-      return month !== currentMonthLabel && !checkIsBooked(d);
-    }).length;
-
-    // Ageing: Calculations done while showing
-    const ageing90 = filteredInvData.filter(d => parseInt(getVal(d, ['Ageing Days', 'ageingdays']) || '0') > 90).length;
-
+    const openingStock = filteredInvData.filter(d => getMonthStr(getVal(d, ['grndate'])) !== timeLabels.currLabel && !checkIsBooked(d)).length;
+    const ageing90 = filteredInvData.filter(d => parseInt(getVal(d, ['ageingdays']) || '0') > 90).length;
     return [
       { label: 'Total Inventory', v1: 0, v2: total },
       { label: 'Opening Stock', v1: 0, v2: openingStock, sub2: total ? Math.round((openingStock/total)*100)+'%' : '-' },
-      { label: 'Available (Open)', v1: 0, v2: openCount, sub2: total ? Math.round((openCount/total)*100)+'%' : '-' },
+      { label: 'Available Stock', v1: 0, v2: total - bookedCount, sub2: total ? Math.round(((total - bookedCount)/total)*100)+'%' : '-' },
       { label: 'Customer Booked', v1: 0, v2: bookedCount, sub2: total ? Math.round((bookedCount/total)*100)+'%' : '-' },
       { label: 'Ageing (>90 Days)', v1: 0, v2: ageing90 },
     ];
@@ -618,247 +411,54 @@ export default function App() {
 
   const sourceStats = useMemo(() => {
     const sourceDataset = filteredLeadData.length > 0 ? filteredLeadData : filteredOppData;
-    const currData = sourceDataset.filter(d => getMonthStr(getVal(d, ['createdon', 'createddate'])) === timeLabels.currLabel);
+    const currData = sourceDataset.filter(d => getMonthStr(getVal(d, ['createddate', 'createdon'])) === timeLabels.currLabel);
     const counts = {};
     currData.forEach(d => { const s = getVal(d, ['source']) || 'Other'; counts[s] = (counts[s] || 0) + 1; });
     return Object.entries(counts).sort(([,a], [,b]) => b - a).slice(0, 5)
       .map(([label, val]) => ({ label, v1: 0, v2: val, sub2: currData.length ? Math.round((val/currData.length)*100)+'%' : '0%' }));
   }, [filteredLeadData, filteredOppData, timeLabels]);
 
-  // --- VIEWS ---
-  const DashboardView = () => (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 animate-fade-in">
-       <div className="bg-white rounded-lg card-shadow p-2 flex flex-col hover:border-blue-200 border border-transparent transition-all group cursor-pointer" onClick={() => setViewMode('detailed')}>
-          <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
-            <LayoutDashboard className="w-3 h-3 text-blue-600" />
-            <h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Sales Funnel</h3>
-          </div>
-          <ComparisonTable rows={funnelStats} headers={[timeLabels.prevLabel, timeLabels.currLabel]} updatedAt={timestamps.opportunities} />
-       </div>
-
-       <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
-          <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
-            <Car className="w-3 h-3 text-indigo-600" />
-            <h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">System Inventory</h3>
-          </div>
-          <ComparisonTable rows={inventoryStats} headers={['', 'Stock']} updatedAt={timestamps.inventory} />
-       </div>
-
-       <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
-          <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
-            <TrendingUp className="w-3 h-3 text-emerald-600" />
-            <h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Channels</h3>
-          </div>
-          <ComparisonTable rows={sourceStats.length ? sourceStats : [{label: 'No Data', v1:0, v2:0}]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} updatedAt={timestamps.leads} />
-       </div>
-
-       <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
-          <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
-            <FileSpreadsheet className="w-3 h-3 text-purple-600" />
-            <h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Value Added</h3>
-          </div>
-          <ComparisonTable rows={[
-               {label: 'Finance Pen.', v1: 0, v2: 0},
-               {label: 'Insurance Pen.', v1: 0, v2: 0},
-               {label: 'Exchange Pen.', v1: 0, v2: 0},
-               {label: 'Accessories', v1: 0, v2: 0, type: 'currency'}
-           ]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} />
-       </div>
-
-       <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
-          <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
-            <Users className="w-3 h-3 text-orange-600" />
-            <h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Sales Ops</h3>
-          </div>
-          <ComparisonTable rows={[
-               {label: 'Monthly Bookings', v1: funnelStats[3]?.v1 || 0, v2: funnelStats[3]?.v2 || 0},
-               {label: 'Monthly Retails', v1: funnelStats[4]?.v1 || 0, v2: funnelStats[4]?.v2 || 0},
-               {label: 'Stock Whl.', v1: 0, v2: 0},
-               {label: 'Corp. Sales', v1: 0, v2: 0}
-           ]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} updatedAt={timestamps.opportunities} />
-       </div>
-
-       <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
-          <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
-            <DollarSign className="w-3 h-3 text-rose-600" />
-            <h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Efficiency</h3>
-          </div>
-          <ComparisonTable rows={[
-               {label: 'Margin/Car', v1: 0, v2: 0, type: 'currency'},
-               {label: 'Total Margin', v1: 0, v2: 0, type: 'currency'},
-               {label: 'Revenue', v1: 0, v2: 0, type: 'currency'},
-               {label: 'Productivity', v1: 0, v2: 0},
-           ]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} />
-       </div>
-    </div>
-  );
-
-  const DetailedView = () => {
-    const consultantMix = useMemo(() => {
-        const counts = {};
-        filteredOppData.forEach(d => { const c = getVal(d, ['Assigned To', 'owner', 'assignedto']); if(c) counts[c] = (counts[c] || 0) + 1; });
-        return Object.entries(counts).map(([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value).slice(0, 10);
-    }, [filteredOppData]);
-
-    const trendData = useMemo(() => {
-      const months = {};
-      oppData.slice(-200).forEach(d => {
-        const m = getMonthStr(getVal(d, ['createdon', 'createddate']));
-        months[m] = (months[m] || 0) + 1;
-      });
-      return Object.entries(months).map(([name, value]) => ({ name, value }));
-    }, [oppData]);
-
-    const funnelMix = useMemo(() => {
-      return funnelStats.map(s => ({ name: s.label, val: s.v2 }));
-    }, [funnelStats]);
-
-    const modelMix = useMemo(() => {
-        const counts = {};
-        filteredOppData.forEach(d => { const m = getVal(d, ['modelline', 'model line', 'modellinefe']); if(m) counts[m] = (counts[m] || 0) + 1; });
-        return Object.entries(counts).map(([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value).slice(0, 5);
-    }, [filteredOppData]);
-
-    return (
-      <div className="space-y-3 animate-fade-in">
-        <div className="bg-white p-2.5 rounded-lg shadow-sm border border-slate-200 flex items-center gap-2">
-          <button onClick={() => setViewMode('dashboard')} className="p-1 hover:bg-slate-100 rounded transition-colors"><ArrowDownRight className="w-4 h-4 text-slate-500 rotate-135" /></button>
-          <h2 className="text-sm font-bold text-slate-900 uppercase tracking-tighter">Graphics Analysis</h2>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-          <div className="bg-white p-3 rounded-lg shadow-sm border border-slate-200 h-64">
-             <h3 className="font-bold text-slate-800 mb-2 text-[9px] uppercase tracking-wider">Top 10 SC Performance</h3>
-             <ResponsiveContainer width="100%" height="90%">
-               <BarChart data={consultantMix} layout="vertical">
-                 <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
-                 <XAxis type="number" hide />
-                 <YAxis dataKey="name" type="category" width={80} tick={{fontSize: 7, fontWeight: 700}} axisLine={false} tickLine={false} />
-                 <RechartsTooltip cursor={{fill: '#f8fafc'}} contentStyle={{fontSize: '9px'}} />
-                 <Bar dataKey="value" fill="#2563eb" radius={[0, 4, 4, 0]} barSize={10} />
-               </BarChart>
-             </ResponsiveContainer>
-          </div>
-
-          <div className="bg-white p-3 rounded-lg shadow-sm border border-slate-200 h-64">
-             <h3 className="font-bold text-slate-800 mb-2 text-[9px] uppercase tracking-wider">Conversion Pipeline</h3>
-             <ResponsiveContainer width="100%" height="90%">
-               <BarChart data={funnelMix}>
-                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                 <XAxis dataKey="name" tick={{fontSize: 7}} />
-                 <YAxis tick={{fontSize: 7}} />
-                 <RechartsTooltip contentStyle={{fontSize: '9px'}} />
-                 <Bar dataKey="val" fill="#10b981" radius={[4, 4, 0, 0]} barSize={25} />
-               </BarChart>
-             </ResponsiveContainer>
-          </div>
-
-          <div className="bg-white p-3 rounded-lg shadow-sm border border-slate-200 h-64">
-             <h3 className="font-bold text-slate-800 mb-2 text-[9px] uppercase tracking-wider">Volume Trendline</h3>
-             <ResponsiveContainer width="100%" height="90%">
-               <LineChart data={trendData}>
-                 <CartesianGrid strokeDasharray="3 3" />
-                 <XAxis dataKey="name" tick={{fontSize: 7}} />
-                 <YAxis tick={{fontSize: 7}} />
-                 <RechartsTooltip contentStyle={{fontSize: '9px'}} />
-                 <Line type="monotone" dataKey="value" stroke="#2563eb" strokeWidth={2} dot={{ r: 3 }} />
-               </LineChart>
-             </ResponsiveContainer>
-          </div>
-          
-          <div className="bg-white p-3 rounded-lg shadow-sm border border-slate-200 h-64">
-             <h3 className="font-bold text-slate-800 mb-2 text-[9px] uppercase tracking-wider text-center">Model Distribution</h3>
-             <ResponsiveContainer width="100%" height="90%">
-               <PieChart>
-                 <Pie data={modelMix} innerRadius={40} outerRadius={60} paddingAngle={4} dataKey="value" nameKey="name">
-                   {modelMix.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
-                 </Pie>
-                 <RechartsTooltip />
-                 <Legend iconSize={7} wrapperStyle={{fontSize: '8px', fontWeight: 700}} />
-               </PieChart>
-             </ResponsiveContainer>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const TableView = () => (
-    <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
-       <div className="overflow-x-auto">
-         <table className="w-full text-left text-[10px] text-slate-600">
-           <thead className="bg-slate-50 text-slate-400 font-bold border-b border-slate-200 uppercase tracking-tighter">
-             <tr><th className="p-2">ID / Engine</th><th className="p-2">Customer / Vehicle</th><th className="p-2">Model</th><th className="p-2">Status</th><th className="p-2">Date</th></tr>
-           </thead>
-           <tbody className="divide-y divide-slate-100">
-             {[...oppData, ...leadData, ...invData].slice(0, 50).map((row, idx) => (
-               <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                 <td className="p-2 font-mono text-slate-400 text-[8px]">{getVal(row, ['id', 'leadid', 'enginenumber'])}</td>
-                 <td className="p-2 font-semibold text-slate-800">{getVal(row, ['customer', 'name', 'model line']) || 'Entry'}</td>
-                 <td className="p-2">{getVal(row, ['modelline', 'model line', 'model'])}</td>
-                 <td className="p-2"><span className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-100 text-[8px] font-bold">{getVal(row, ['status', 'primarystatus', 'qualificationlevel']) || 'Active'}</span></td>
-                 <td className="p-2">{getVal(row, ['createdon', 'createddate', 'grndate'])}</td>
-               </tr>
-             ))}
-           </tbody>
-         </table>
-       </div>
-    </div>
-  );
-
   return (
     <div className="min-h-screen font-sans pb-8">
        <GlobalStyles />
-       <ImportWizard isOpen={showImport} onClose={() => setShowImport(false)} onDataImported={handleDataImport} isUploading={isUploading} mode={storageMode} />
+       <ImportWizard isOpen={showImport} onClose={() => setShowImport(false)} onDataImported={handleDataImport} isUploading={isUploading} />
 
        <header className="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-sm">
          <div className="max-w-[1400px] mx-auto px-3 h-10 flex items-center justify-between">
            <div className="flex items-center gap-2">
-             <div className="w-6 h-6 bg-blue-600 rounded flex items-center justify-center text-white"><Car className="w-3.5 h-3.5" /></div>
+             <div className="w-6 h-6 bg-blue-600 rounded flex items-center justify-center text-white"><DatabaseBackup className="w-3.5 h-3.5" /></div>
              <div>
-                <h1 className="text-[10px] font-black text-slate-900 leading-none uppercase tracking-tighter italic">Sales IQ</h1>
-                <div className="text-[6px] text-slate-400 uppercase font-bold tracking-widest leading-none mt-0.5">{timeLabels.currLabel} SQL SNAPSHOT</div>
+                <h1 className="text-[10px] font-black text-slate-900 leading-none uppercase tracking-tighter italic">Sales IQ SQL</h1>
+                <div className="text-[6px] text-slate-400 uppercase font-bold tracking-widest leading-none mt-0.5">{timeLabels.currLabel} CLOUD SNAPSHOT</div>
              </div>
            </div>
 
            <div className="flex items-center gap-2">
               <div className="flex bg-slate-100 p-0.5 rounded border border-slate-200">
                 <button onClick={() => setViewMode('dashboard')} className={`px-2 py-0.5 rounded text-[8px] font-extrabold ${viewMode === 'dashboard' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>DASHBOARD</button>
-                <button onClick={() => setViewMode('detailed')} className={`px-2 py-0.5 rounded text-[8px] font-extrabold ${viewMode === 'detailed' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>ANALYTICS</button>
                 <button onClick={() => setViewMode('table')} className={`px-2 py-0.5 rounded text-[8px] font-extrabold ${viewMode === 'table' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>RECORDS</button>
               </div>
-              <button onClick={() => setShowImport(true)} className="bg-slate-900 text-white px-2.5 py-0.5 rounded text-[8px] font-bold hover:bg-slate-800 flex items-center gap-1"><Upload className="w-2.5 h-2.5" /> IMPORT</button>
-              <button onClick={clearData} className="p-0.5 text-rose-400 hover:bg-rose-50 rounded transition-colors"><Trash2 className="w-3 h-3" /></button>
+              <button onClick={() => setShowImport(true)} className="bg-slate-900 text-white px-2.5 py-0.5 rounded text-[8px] font-bold hover:bg-slate-800 flex items-center gap-1"><Upload className="w-2.5 h-2.5" /> SYNC CSV</button>
+              <button onClick={loadCloudData} className="p-0.5 text-slate-400 hover:text-blue-600 rounded transition-colors"><RefreshCw className={`w-3 h-3 ${isUploading ? 'animate-spin' : ''}`} /></button>
            </div>
          </div>
          
          <div className="border-t border-slate-100 bg-white px-3 py-1 flex items-center gap-2.5 overflow-x-auto no-scrollbar">
             <div className="flex items-center gap-2">
               <span className="text-[7px] font-black text-slate-400 uppercase flex items-center gap-1 min-w-max"><Filter className="w-2 h-2" /> FILTERS</span>
-              
-              <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded px-1 py-0.5 h-5">
-                <UserCheck className="w-2 h-2 text-slate-400" />
-                <select className="bg-transparent text-[8px] font-bold text-slate-700 outline-none min-w-[70px]" value={filters.consultant} onChange={e => setFilters({...filters, consultant: e.target.value})}>
-                   <option value="All">All SCs</option>
-                   {consultantOptions.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-              </div>
-
               <select className="bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 text-[8px] font-bold text-slate-700 outline-none h-5" value={filters.model} onChange={e => setFilters({...filters, model: e.target.value})}>
                  <option value="All">All Models</option>
                  {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
-
               <select className="bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 text-[8px] font-bold text-slate-700 outline-none h-5" value={filters.location} onChange={e => setFilters({...filters, location: e.target.value})}>
                  <option value="All">All Branches</option>
                  {locationOptions.map(l => <option key={l} value={l}>{l}</option>)}
               </select>
             </div>
-            
             <div className="ml-auto flex items-center gap-1.5 min-w-max">
                <div className="comparison-toggle" onClick={() => setTimeView(timeView === 'CY' ? 'LY' : 'CY')}>
-                  <div className={`comparison-toggle-item ${timeView === 'CY' ? 'comparison-toggle-active' : 'text-slate-500'}`}>CY (MoM)</div>
-                  <div className={`comparison-toggle-item ${timeView === 'LY' ? 'comparison-toggle-active' : 'text-slate-500'}`}>LY (YoY)</div>
+                  <div className={`comparison-toggle-item ${timeView === 'CY' ? 'comparison-toggle-active' : 'text-slate-500'}`}>MoM</div>
+                  <div className={`comparison-toggle-item ${timeView === 'LY' ? 'comparison-toggle-active' : 'text-slate-500'}`}>YoY</div>
                </div>
             </div>
          </div>
@@ -866,9 +466,61 @@ export default function App() {
 
        <main className="max-w-[1400px] mx-auto px-3 py-2.5">
          {successMsg && <div className="bg-emerald-600 text-white rounded shadow-sm px-3 py-1 text-[9px] font-black mb-2 animate-fade-in flex items-center gap-2 uppercase tracking-wide"><CheckCircle className="w-2.5 h-2.5" /> {successMsg}</div>}
-         {viewMode === 'dashboard' && <DashboardView />}
-         {viewMode === 'detailed' && <DetailedView />}
-         {viewMode === 'table' && <TableView />}
+         
+         {viewMode === 'dashboard' && (
+           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
+                <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
+                  <LayoutDashboard className="w-3 h-3 text-blue-600" />
+                  <h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Sales Funnel</h3>
+                </div>
+                <ComparisonTable rows={funnelStats} headers={[timeLabels.prevLabel, timeLabels.currLabel]} updatedAt={timestamps.opportunities} />
+              </div>
+
+              <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
+                <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
+                  <Car className="w-3 h-3 text-indigo-600" />
+                  <h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">System Inventory</h3>
+                </div>
+                <ComparisonTable rows={inventoryStats} headers={['', 'Stock']} updatedAt={timestamps.inventory} />
+              </div>
+
+              <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
+                <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
+                  <TrendingUp className="w-3 h-3 text-emerald-600" />
+                  <h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Lead Channels</h3>
+                </div>
+                <ComparisonTable rows={sourceStats.length ? sourceStats : [{label: 'No Data', v1:0, v2:0}]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} updatedAt={timestamps.leads} />
+              </div>
+           </div>
+         )}
+
+         {viewMode === 'table' && (
+           <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
+             <div className="overflow-x-auto">
+               <table className="w-full text-left text-[10px] text-slate-600">
+                 <thead className="bg-slate-50 text-slate-400 font-bold border-b border-slate-200 uppercase tracking-tighter">
+                   <tr><th className="p-2">Engine #</th><th className="p-2">Model</th><th className="p-2">VIN</th><th className="p-2">Status</th><th className="p-2">Ageing</th></tr>
+                 </thead>
+                 <tbody className="divide-y divide-slate-100">
+                   {invData.slice(0, 50).map((row, idx) => (
+                     <tr key={idx} className="hover:bg-slate-50 transition-colors">
+                       <td className="p-2 font-mono text-slate-900 font-bold">{getVal(row, ['enginenumber'])}</td>
+                       <td className="p-2">{getVal(row, ['modelline'])}</td>
+                       <td className="p-2 text-slate-400 text-[8px]">{getVal(row, ['vehicleidentificationnumber'])}</td>
+                       <td className="p-2">
+                          <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold ${getVal(row, ['salesordernumber']) ? 'bg-orange-100 text-orange-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                            {getVal(row, ['salesordernumber']) ? 'BOOKED' : 'OPEN'}
+                          </span>
+                       </td>
+                       <td className="p-2 font-mono">{getVal(row, ['ageingdays'])}d</td>
+                     </tr>
+                   ))}
+                 </tbody>
+               </table>
+             </div>
+           </div>
+         )}
        </main>
     </div>
   );
