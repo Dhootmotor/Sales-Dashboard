@@ -4,55 +4,53 @@ import {
 } from 'recharts';
 import { 
   LayoutDashboard, Upload, Filter, TrendingUp, Users, Car, DollarSign, FileSpreadsheet, 
-  ArrowUpRight, ArrowDownRight, Clock, X, CheckCircle, Trash2, UserCheck, AlertTriangle, CloudOff
+  ArrowUpRight, ArrowDownRight, Clock, X, CheckCircle, Trash2, UserCheck, AlertTriangle, CloudOff, Database
 } from 'lucide-react';
 
 /**
- * Using esm.sh to import Firebase directly. 
- * This resolves the "Rollup failed to resolve import" build error on Vercel 
- * by treating Firebase as an external module.
+ * Using esm.sh to import Supabase directly.
  */
-import { initializeApp } from 'https://esm.sh/firebase@11.1.0/app';
-import { getAuth, onAuthStateChanged, signInWithCustomToken, signInAnonymously } from 'https://esm.sh/firebase@11.1.0/auth';
-import { getFirestore, doc, setDoc, getDoc, collection, query, onSnapshot, deleteDoc, writeBatch, getDocs } from 'https://esm.sh/firebase@11.1.0/firestore';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
 
 // --- ROBUST CONFIGURATION LOADER ---
 const getAppConfig = () => {
-  let config = null;
-  let appId = 'default-app-id';
-  let authToken = null;
+  let url = null;
+  let anonKey = null;
 
   try {
-    // Try to get from environment globals (Canvas/Preview mode)
-    if (typeof __firebase_config !== 'undefined' && __firebase_config) {
-      config = typeof __firebase_config === 'string' ? JSON.parse(__firebase_config) : __firebase_config;
+    // 1. Try to get from standard Vite environment variables
+    if (typeof import.meta !== 'undefined' && import.meta.env) {
+      url = import.meta.env.VITE_SUPABASE_URL;
+      anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
     }
-    if (typeof __app_id !== 'undefined') appId = __app_id;
-    if (typeof __initial_auth_token !== 'undefined') authToken = __initial_auth_token;
 
-    // Fallback to local storage or env for Vercel deployments
-    if (!config && typeof window !== 'undefined') {
-      const stored = localStorage.getItem('SALES_IQ_FIREBASE_CONFIG');
-      if (stored) config = JSON.parse(stored);
+    // 2. Fallback to window globals (Canvas environment)
+    if (!url && typeof window !== 'undefined') {
+      url = window.VITE_SUPABASE_URL || window.__SUPABASE_URL;
+      anonKey = window.VITE_SUPABASE_ANON_KEY || window.__SUPABASE_ANON_KEY;
+    }
+
+    // 3. Fallback to Local Storage
+    if (!url && typeof window !== 'undefined') {
+      url = localStorage.getItem('VITE_SUPABASE_URL');
+      anonKey = localStorage.getItem('VITE_SUPABASE_ANON_KEY');
     }
   } catch (e) {
     console.error("Config loader error:", e);
   }
 
-  return { config, appId, authToken };
+  return { url, anonKey };
 };
 
-const { config: firebaseConfig, appId, authToken } = getAppConfig();
+const { url: supabaseUrl, anonKey: supabaseAnonKey } = getAppConfig();
 
-// Initialize Firebase services only if config exists
-let app, auth, db;
-if (firebaseConfig) {
+// Initialize Supabase only if config exists
+let supabase = null;
+if (supabaseUrl && supabaseAnonKey) {
   try {
-    app = initializeApp(firebaseConfig);
-    auth = getAuth(app);
-    db = getFirestore(app);
+    supabase = createClient(supabaseUrl, supabaseAnonKey);
   } catch (e) {
-    console.error("Firebase Initialization Failed:", e);
+    console.error("Supabase Init Error:", e);
   }
 }
 
@@ -298,30 +296,30 @@ export default function App() {
   const [timeView, setTimeView] = useState('CY'); 
   const [filters, setFilters] = useState({ model: 'All', location: 'All', consultant: 'All' });
 
-  // Fallback for missing Firebase
-  if (!firebaseConfig) {
+  // Safety Guard: Show Setup screen if Supabase config is missing
+  if (!supabaseUrl || !supabaseAnonKey) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-900 text-white p-6">
+      <div className="min-h-screen flex items-center justify-center bg-slate-950 text-white p-6">
         <GlobalStyles />
         <div className="max-w-md w-full space-y-6 text-center animate-fade-in">
           <div className="mx-auto w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center">
-            <CloudOff className="w-8 h-8" />
+            <Database className="w-8 h-8" />
           </div>
           <div className="space-y-2">
-            <h1 className="text-2xl font-black italic uppercase tracking-tighter">Sales IQ IQ Offline</h1>
-            <p className="text-slate-400 text-sm">Dashboard is waiting for Firebase credentials to activate cloud storage features.</p>
+            <h1 className="text-2xl font-black italic uppercase tracking-tighter">Sales IQ IQ Setup</h1>
+            <p className="text-slate-400 text-sm">Waiting for Supabase credentials to activate dashboard syncing.</p>
           </div>
-          <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 text-left">
-            <div className="flex items-center gap-2 text-blue-400 font-bold text-xs mb-2">
-              <AlertTriangle className="w-3 h-3" /> HOW TO FIX
+          <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 text-left">
+            <div className="flex items-center gap-2 text-emerald-400 font-bold text-xs mb-3">
+              <AlertTriangle className="w-3 h-3" /> ACTION REQUIRED
             </div>
-            <ol className="text-[11px] text-slate-300 space-y-2 list-decimal list-inside">
-              <li>Open your Firebase Project Settings.</li>
-              <li>Copy the <code className="bg-black/40 px-1 rounded text-pink-400">firebaseConfig</code> object.</li>
-              <li>Add it to your environment variables or provide it to the dashboard.</li>
+            <ol className="text-[11px] text-slate-400 space-y-3 list-decimal list-inside leading-relaxed">
+              <li>Open your Supabase Project Settings > API.</li>
+              <li>Provide <code className="text-pink-400">VITE_SUPABASE_URL</code> and <code className="text-pink-400">VITE_SUPABASE_ANON_KEY</code> to the app environment.</li>
+              <li>Ensure your tables (<code className="text-slate-200">opportunities, leads, inventory, bookings</code>) are created in the SQL Editor.</li>
             </ol>
           </div>
-          <p className="text-[10px] text-slate-500">The screen is blank because initialization failed safely.</p>
+          <p className="text-[10px] text-slate-500">The screen is blank because initialization is paused for security.</p>
         </div>
       </div>
     );
@@ -329,46 +327,51 @@ export default function App() {
 
   // --- INITIALIZATION ---
   useEffect(() => {
-    if (!auth) return;
+    if (!supabase) return;
+
     const initAuth = async () => {
-      try {
-        if (typeof authToken !== 'undefined' && authToken) {
-          await signInWithCustomToken(auth, authToken);
-        } else {
-          await signInAnonymously(auth);
-        }
-      } catch (e) {
-        console.error("Auth error:", e);
-      }
+      const { data: { session } } = await supabase.auth.getSession();
+      setUser(session?.user || null);
     };
     initAuth();
-    const unsubscribe = onAuthStateChanged(auth, setUser);
-    return () => unsubscribe();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user || null);
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
   // --- DATA FETCHING ---
   useEffect(() => {
-    if (!user || !db) return;
+    if (!supabase) return;
 
-    const collections = ['opportunities', 'leads', 'inventory', 'bookings'];
-    const unsubscribes = collections.map(colName => {
-      const q = query(collection(db, 'artifacts', appId, 'users', user.uid, colName));
-      return onSnapshot(q, (snapshot) => {
-        const data = snapshot.docs.map(doc => doc.data().data);
-        const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        
-        if (colName === 'opportunities') setOppData(data);
-        if (colName === 'leads') setLeadData(data);
-        if (colName === 'inventory') setInvData(data);
-        if (colName === 'bookings') setBookingData(data);
-        
-        setTimestamps(prev => ({...prev, [colName]: now}));
-      }, (err) => {
-        console.error(`Firestore error in ${colName}:`, err);
-      });
+    const fetchData = async () => {
+      const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      
+      const { data: opps } = await supabase.from('opportunities').select('*');
+      if (opps) { setOppData(opps); setTimestamps(prev => ({...prev, opportunities: now})); }
+
+      const { data: leads } = await supabase.from('leads').select('*');
+      if (leads) { setLeadData(leads); setTimestamps(prev => ({...prev, leads: now})); }
+
+      const { data: inv } = await supabase.from('inventory').select('*');
+      if (inv) { setInvData(inv); setTimestamps(prev => ({...prev, inventory: now})); }
+
+      const { data: bks } = await supabase.from('bookings').select('*');
+      if (bks) { setBookingData(bks); setTimestamps(prev => ({...prev, bookings: now})); }
+    };
+
+    fetchData();
+
+    // Setup real-time subscriptions
+    const channels = ['opportunities', 'leads', 'inventory', 'bookings'].map(table => {
+      return supabase.channel(`public:${table}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table }, () => fetchData())
+        .subscribe();
     });
 
-    return () => unsubscribes.forEach(unsub => unsub());
+    return () => channels.forEach(c => supabase.removeChannel(c));
   }, [user]);
 
   // --- DATE HELPERS ---
@@ -410,64 +413,61 @@ export default function App() {
 
   // --- UPLOAD HANDLER ---
   const handleDataImport = async (newData, type, overwrite) => {
-    if (!user || !db) return;
+    if (!supabase) return;
     setIsUploading(true);
     try {
-      const colRef = collection(db, 'artifacts', appId, 'users', user.uid, type);
-      
-      // Handle overwrite
       if (overwrite) {
-        const snapshot = await getDocs(colRef);
-        const batch = writeBatch(db);
-        snapshot.docs.forEach((doc) => batch.delete(doc.ref));
-        await batch.commit();
+        await supabase.from(type).delete().neq('id', '0'); // Delete all (with a safety dummy condition)
       }
 
-      // Batch upload (chunked for safety)
-      const CHUNK_SIZE = 400;
-      for (let i = 0; i < newData.length; i += CHUNK_SIZE) {
-        const chunk = newData.slice(i, i + CHUNK_SIZE);
-        const batch = writeBatch(db);
-        chunk.forEach(item => {
-           const id = type === 'opportunities' ? getVal(item, ['id', 'opportunityid']) : 
-                     (type === 'leads' ? getVal(item, ['leadid', 'lead id']) : 
-                     (type === 'inventory' ? getVal(item, ['Vehicle Identification Number', 'vin']) : 
-                     crypto.randomUUID()));
-           const safeId = String(id || crypto.randomUUID()).replace(/\//g, '_');
-           const docRef = doc(colRef, safeId);
-           batch.set(docRef, { data: item, updatedAt: new Date().toISOString() });
-        });
-        await batch.commit();
-      }
+      const conflictColumn = type === 'opportunities' ? 'id' : 
+                            (type === 'leads' ? 'leadid' : 
+                            (type === 'inventory' ? 'vin' : 'id'));
 
-      setSuccessMsg(`Synced ${newData.length} records to Cloud`);
+      // Process and clean data to ensure it fits DB schema
+      const records = newData.map(item => {
+        const id = type === 'opportunities' ? getVal(item, ['id', 'opportunityid']) : 
+                  (type === 'leads' ? getVal(item, ['leadid', 'lead id']) : 
+                  (type === 'inventory' ? getVal(item, ['Vehicle Identification Number', 'vin']) : 
+                  crypto.randomUUID()));
+        
+        return {
+          id: String(id || crypto.randomUUID()),
+          data: item, // Storing raw data in a JSONB column named 'data' is the safest way to prevent schema errors
+          updated_at: new Date().toISOString(),
+          user_id: user?.id || null
+        };
+      });
+
+      const { error } = await supabase.from(type).upsert(records, { onConflict: 'id' });
+      if (error) throw error;
+
+      setSuccessMsg(`Synced ${newData.length} records to Supabase`);
       setTimeout(() => setSuccessMsg(''), 5000);
     } catch (e) {
-      console.error("Sync Error:", e);
+      console.error("Supabase Sync Error:", e);
+      alert(`Sync Error: ${e.message}. Ensure columns 'id' (Text), 'data' (JSONB), 'updated_at' (Timestamptz) exist in your ${type} table.`);
     } finally {
       setIsUploading(false);
     }
   };
 
   const clearData = async () => {
-    if(!user || !db) return;
-    if(window.confirm("System Reset? This will clear ALL dashboard data from the cloud.")) {
-       const collections = ['opportunities', 'leads', 'inventory', 'bookings'];
-       for (const colName of collections) {
-         const colRef = collection(db, 'artifacts', appId, 'users', user.uid, colName);
-         const snapshot = await getDocs(colRef);
-         const batch = writeBatch(db);
-         snapshot.docs.forEach((doc) => batch.delete(doc.ref));
-         await batch.commit();
+    if(!supabase) return;
+    if(window.confirm("System Reset? This will clear all data from Supabase.")) {
+       const tables = ['opportunities', 'leads', 'inventory', 'bookings'];
+       for (const t of tables) {
+         await supabase.from(t).delete().neq('id', '0');
        }
-       setSuccessMsg("Cloud Clear.");
+       setSuccessMsg("Cloud Cleared.");
        setTimeout(() => setSuccessMsg(''), 3000);
     }
   };
 
   // --- FILTERING ---
   const getFilteredData = (data, dataType) => {
-    return data.filter(item => {
+    // Note: When using JSONB 'data' column, we access via item.data
+    return data.map(d => d.data || d).filter(item => {
       if (dataType === 'inventory') {
         const itemModel = getVal(item, ['modellinefe', 'Model Line', 'Model']).trim();
         return filters.model === 'All' || itemModel === filters.model;
@@ -486,9 +486,15 @@ export default function App() {
   const filteredLeadData = useMemo(() => getFilteredData(leadData, 'leads'), [leadData, filters]);
   const filteredInvData = useMemo(() => getFilteredData(invData, 'inventory'), [invData, filters]);
   
-  const allDataForFilters = useMemo(() => [...oppData, ...leadData, ...invData], [oppData, leadData, invData]);
+  const allDataForFilters = useMemo(() => {
+    const rawOpp = oppData.map(d => d.data || d);
+    const rawLead = leadData.map(d => d.data || d);
+    const rawInv = invData.map(d => d.data || d);
+    return [...rawOpp, ...rawLead, ...rawInv];
+  }, [oppData, leadData, invData]);
+
   const locationOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['Dealer Code', 'city'])))].filter(Boolean).sort(), [allDataForFilters]);
-  const consultantOptions = useMemo(() => [...new Set(oppData.map(d => getVal(d, ['Assigned To'])))].filter(Boolean).sort(), [oppData]);
+  const consultantOptions = useMemo(() => [...new Set(oppData.map(d => getVal(d.data || d, ['Assigned To'])))].filter(Boolean).sort(), [oppData]);
   const modelOptions = useMemo(() => [...new Set(allDataForFilters.map(d => getVal(d, ['modellinefe', 'Model Line'])))].filter(Boolean).sort(), [allDataForFilters]);
 
   // --- METRICS ---
@@ -519,8 +525,9 @@ export default function App() {
 
   const inventoryStats = useMemo(() => {
     const total = filteredInvData.length;
-    const bookedVinSet = new Set(bookingData.map(b => getVal(b, ['Vehicle ID No.', 'VIN']).trim()).filter(Boolean));
-    const bookingModelTexts = bookingData.map(b => getVal(b, ['Model Text 1']).toLowerCase());
+    const rawBookings = bookingData.map(d => d.data || d);
+    const bookedVinSet = new Set(rawBookings.map(b => getVal(b, ['Vehicle ID No.', 'VIN']).trim()).filter(Boolean));
+    const bookingModelTexts = rawBookings.map(b => getVal(b, ['Model Text 1']).toLowerCase());
 
     const checkIsBooked = (d) => {
       const vin = getVal(d, ['Vehicle Identification Number', 'vin']).trim();
@@ -567,7 +574,7 @@ export default function App() {
        <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
           <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
             <Car className="w-3 h-3 text-indigo-600" />
-            <h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Cloud Inventory</h3>
+            <h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Live Inventory</h3>
           </div>
           <ComparisonTable rows={inventoryStats} headers={['', 'Stock']} updatedAt={timestamps.inventory} />
        </div>
@@ -575,7 +582,7 @@ export default function App() {
        <div className="bg-white rounded-lg card-shadow p-2 flex flex-col border border-transparent transition-all">
           <div className="flex items-center gap-1.5 mb-1.5 border-b border-slate-50 pb-1">
             <TrendingUp className="w-3 h-3 text-emerald-600" />
-            <h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Lead Channels</h3>
+            <h3 className="font-bold text-slate-800 text-[10px] uppercase tracking-tight">Channels</h3>
           </div>
           <ComparisonTable rows={sourceStats.length ? sourceStats : [{label: 'No Data', v1:0, v2:0}]} headers={[timeLabels.prevLabel, timeLabels.currLabel]} updatedAt={timestamps.leads} />
        </div>
@@ -613,7 +620,8 @@ export default function App() {
 
     const trendData = useMemo(() => {
       const months = {};
-      oppData.slice(-200).forEach(d => {
+      const rawOpp = oppData.map(d => d.data || d);
+      rawOpp.slice(-200).forEach(d => {
         const m = getMonthStr(getVal(d, ['createdon', 'createddate']));
         months[m] = (months[m] || 0) + 1;
       });
@@ -710,7 +718,7 @@ export default function App() {
            <div className="flex items-center gap-2">
              <div className="w-6 h-6 bg-blue-600 rounded flex items-center justify-center text-white"><Car className="w-3.5 h-3.5" /></div>
              <div>
-                <h1 className="text-[10px] font-black text-slate-900 leading-none uppercase tracking-tighter italic">Sales IQ Cloud</h1>
+                <h1 className="text-[10px] font-black text-slate-900 leading-none uppercase tracking-tighter italic">Sales IQ Supabase</h1>
                 <div className="text-[6px] text-slate-400 uppercase font-bold tracking-widest leading-none mt-0.5">{timeLabels.currLabel} Live Snapshot</div>
              </div>
            </div>
@@ -760,16 +768,10 @@ export default function App() {
 
        <main className="max-w-[1400px] mx-auto px-3 py-2.5">
          {successMsg && <div className="bg-emerald-600 text-white rounded shadow-sm px-3 py-1 text-[9px] font-black mb-2 animate-fade-in flex items-center gap-2 uppercase tracking-wide"><CheckCircle className="w-2.5 h-2.5" /> {successMsg}</div>}
-         {viewMode === 'dashboard' && <DashboardView />}
+         <DashboardView />
          {viewMode === 'detailed' && <AnalyticsView />}
          {viewMode === 'table' && <TableView />}
        </main>
-
-       {user && (
-         <div className="fixed bottom-2 right-2 text-[8px] font-mono text-slate-400 bg-white/80 px-2 py-1 rounded border border-slate-200">
-           UID: {user.uid}
-         </div>
-       )}
     </div>
   );
 }
