@@ -6,13 +6,11 @@ import {
   LayoutDashboard, Upload, Filter, TrendingUp, TrendingDown, 
   Users, Car, DollarSign, FileSpreadsheet, 
   ArrowUpRight, ArrowDownRight, 
-  Clock, X, CheckCircle, Trash2, UserCheck, AlertTriangle, Database, CloudOff
+  Clock, X, CheckCircle, Trash2, UserCheck, AlertTriangle, Database, CloudOff, Code, Copy
 } from 'lucide-react';
 
 /**
  * Using esm.sh to import Supabase directly. 
- * For your local project, you can keep your npm import: 
- * import { createClient } from '@supabase/supabase-js';
  */
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
 
@@ -22,19 +20,16 @@ const getAppConfig = () => {
   let anonKey = null;
 
   try {
-    // 1. Try to get from standard environment variables (Vite/Vercel)
     if (typeof import.meta !== 'undefined' && import.meta.env) {
       url = import.meta.env.VITE_SUPABASE_URL;
       anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
     }
 
-    // 2. Fallback to window globals (Canvas environment)
     if (!url && typeof window !== 'undefined') {
       url = window.VITE_SUPABASE_URL || window.__SUPABASE_URL;
       anonKey = window.VITE_SUPABASE_ANON_KEY || window.__SUPABASE_ANON_KEY;
     }
 
-    // 3. Fallback to Local Storage (Manual Setup)
     if (!url && typeof window !== 'undefined') {
       url = localStorage.getItem('VITE_SUPABASE_URL');
       anonKey = localStorage.getItem('VITE_SUPABASE_ANON_KEY');
@@ -48,7 +43,6 @@ const getAppConfig = () => {
 
 const { url: supabaseUrl, anonKey: supabaseAnonKey } = getAppConfig();
 
-// Initialize Supabase only if config exists
 let supabase = null;
 if (supabaseUrl && supabaseAnonKey) {
   try {
@@ -300,29 +294,76 @@ export default function App() {
   const [timeView, setTimeView] = useState('CY'); 
   const [filters, setFilters] = useState({ model: 'All', location: 'All', consultant: 'All' });
 
+  // SQL Script to be provided in Setup screen
+  const setupSQL = `CREATE TABLE IF NOT EXISTS opportunities (id TEXT PRIMARY KEY, data JSONB, updated_at TIMESTAMPTZ, user_id UUID);
+CREATE TABLE IF NOT EXISTS leads (id TEXT PRIMARY KEY, data JSONB, updated_at TIMESTAMPTZ, user_id UUID);
+CREATE TABLE IF NOT EXISTS inventory (id TEXT PRIMARY KEY, data JSONB, updated_at TIMESTAMPTZ, user_id UUID);
+CREATE TABLE IF NOT EXISTS bookings (id TEXT PRIMARY KEY, data JSONB, updated_at TIMESTAMPTZ, user_id UUID);
+
+-- Ensure RLS allows public access (for initial testing)
+ALTER TABLE opportunities ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Public Access" ON opportunities FOR ALL USING (true) WITH CHECK (true);
+ALTER TABLE leads ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Public Access" ON leads FOR ALL USING (true) WITH CHECK (true);
+ALTER TABLE inventory ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Public Access" ON inventory FOR ALL USING (true) WITH CHECK (true);
+ALTER TABLE bookings ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Public Access" ON bookings FOR ALL USING (true) WITH CHECK (true);`;
+
   // Safety Guard: Show Setup screen if Supabase config is missing
   if (!supabaseUrl || !supabaseAnonKey) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-950 text-white p-6">
         <GlobalStyles />
-        <div className="max-w-md w-full space-y-6 text-center animate-fade-in">
-          <div className="mx-auto w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center">
-            <Database className="w-8 h-8" />
-          </div>
-          <div className="space-y-2">
-            <h1 className="text-2xl font-black italic uppercase tracking-tighter">Sales IQ Supabase Setup</h1>
-            <p className="text-slate-400 text-sm">Please provide your Supabase credentials to activate the dashboard.</p>
-          </div>
-          <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 text-left">
-            <div className="flex items-center gap-2 text-emerald-400 font-bold text-xs mb-3">
-              <AlertTriangle className="w-3 h-3" /> ACTION REQUIRED
+        <div className="max-w-2xl w-full space-y-8 text-center animate-fade-in">
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-900/20">
+              <Database className="w-8 h-8" />
             </div>
-            <ol className="text-[11px] text-slate-400 space-y-3 list-decimal list-inside leading-relaxed">
-              <li>Open your Supabase Project Settings {' > '} API.</li>
-              <li>Add <code className="text-pink-400">VITE_SUPABASE_URL</code> and <code className="text-pink-400">VITE_SUPABASE_ANON_KEY</code> to your environment.</li>
-              <li>Ensure your tables (<code className="text-slate-200">opportunities, leads, inventory, bookings</code>) are created in the SQL Editor.</li>
-            </ol>
+            <h1 className="text-3xl font-black italic uppercase tracking-tighter">Sales IQ Cloud Setup</h1>
+            <p className="text-slate-400 text-sm max-w-md mx-auto">Database connection is required to activate the dashboard's persistent storage features.</p>
           </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+             <div className="bg-slate-900 p-5 rounded-xl border border-slate-800 text-left space-y-4">
+                <div className="flex items-center gap-2 text-blue-400 font-bold text-xs uppercase tracking-widest">
+                  <Database className="w-3.5 h-3.5" /> 1. Configuration
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed">Add these to your local <code className="text-pink-400">.env</code> file or provide them as global variables in this environment.</p>
+                <div className="space-y-2">
+                   <div className="bg-black/50 p-2 rounded text-[10px] font-mono border border-slate-800 flex justify-between items-center group">
+                      <span className="text-slate-500">VITE_SUPABASE_URL</span>
+                      <span className="text-slate-200">Missing</span>
+                   </div>
+                   <div className="bg-black/50 p-2 rounded text-[10px] font-mono border border-slate-800 flex justify-between items-center group">
+                      <span className="text-slate-500">VITE_SUPABASE_ANON_KEY</span>
+                      <span className="text-slate-200">Missing</span>
+                   </div>
+                </div>
+             </div>
+
+             <div className="bg-slate-900 p-5 rounded-xl border border-slate-800 text-left space-y-4">
+                <div className="flex items-center gap-2 text-emerald-400 font-bold text-xs uppercase tracking-widest">
+                  <Code className="w-3.5 h-3.5" /> 2. SQL Schema
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed">Copy the code below and paste it into your <b>Supabase SQL Editor</b>. Click "Run" to initialize your tables.</p>
+                <div className="relative group">
+                  <textarea 
+                    readOnly 
+                    value={setupSQL}
+                    className="w-full h-24 bg-black/50 p-2 rounded text-[9px] font-mono border border-slate-800 text-emerald-500/80 outline-none resize-none no-scrollbar"
+                  />
+                  <button 
+                    onClick={() => { document.execCommand('copy'); }} 
+                    className="absolute top-1 right-1 p-1.5 bg-slate-800 hover:bg-blue-600 rounded-md transition-colors shadow-xl"
+                    title="Copy SQL to Clipboard"
+                  >
+                    <Copy className="w-3 h-3 text-white" />
+                  </button>
+                </div>
+             </div>
+          </div>
+          <p className="text-[10px] text-slate-500">Note: Copy only the code inside the black box above to avoid syntax errors.</p>
         </div>
       </div>
     );
@@ -424,7 +465,6 @@ export default function App() {
         await supabase.from(type).delete().neq('id', '0');
       }
 
-      // Process and clean data to ensure it fits DB schema via JSONB 'data' column
       const records = newData.map(item => {
         const id = type === 'opportunities' ? getVal(item, ['id', 'opportunityid']) : 
                   (type === 'leads' ? getVal(item, ['leadid', 'lead id']) : 
@@ -433,13 +473,12 @@ export default function App() {
         
         return {
           id: String(id || crypto.randomUUID()),
-          data: item, // THIS IS THE KEY: We store raw data in a JSONB 'data' column
+          data: item, 
           updated_at: new Date().toISOString(),
           user_id: user?.id || null
         };
       });
 
-      // Split into chunks of 100 for reliable Supabase ingest
       const CHUNK_SIZE = 100;
       for (let i = 0; i < records.length; i += CHUNK_SIZE) {
         const chunk = records.slice(i, i + CHUNK_SIZE);
@@ -451,7 +490,7 @@ export default function App() {
       setTimeout(() => setSuccessMsg(''), 5000);
     } catch (e) {
       console.error("Supabase Sync Error:", e);
-      alert(`Sync Error: ${e.message}. Please check your SQL Editor setup.`);
+      alert(`Sync Error: ${e.message}. Ensure your tables exist in Supabase.`);
     } finally {
       setIsUploading(false);
     }
