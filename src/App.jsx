@@ -6,11 +6,18 @@ import {
   LayoutDashboard, Upload, Filter, TrendingUp, Users, Car, DollarSign, FileSpreadsheet, 
   ArrowUpRight, ArrowDownRight, Clock, X, CheckCircle, Trash2, UserCheck
 } from 'lucide-react';
-import { initializeApp } from 'firebase/app';
-import { getAuth, onAuthStateChanged, signInWithCustomToken, signInAnonymously } from 'firebase/auth';
-import { getFirestore, doc, setDoc, getDoc, collection, query, onSnapshot, deleteDoc, writeBatch } from 'firebase/firestore';
+
+/**
+ * Using esm.sh to import Firebase directly. 
+ * This resolves the "Rollup failed to resolve import" build error on Vercel 
+ * by treating Firebase as an external module.
+ */
+import { initializeApp } from 'https://esm.sh/firebase@11.1.0/app';
+import { getAuth, onAuthStateChanged, signInWithCustomToken, signInAnonymously } from 'https://esm.sh/firebase@11.1.0/auth';
+import { getFirestore, doc, setDoc, getDoc, collection, query, onSnapshot, deleteDoc, writeBatch, getDocs } from 'https://esm.sh/firebase@11.1.0/firestore';
 
 // --- FIREBASE CONFIGURATION ---
+// These globals are provided by the environment
 const firebaseConfig = JSON.parse(__firebase_config);
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -340,11 +347,12 @@ export default function App() {
     try {
       const colRef = collection(db, 'artifacts', appId, 'users', user.uid, type);
       
-      // Handle overwrite by deleting all docs in current collection
+      // Handle overwrite
       if (overwrite) {
+        const snapshot = await getDocs(colRef);
         const batch = writeBatch(db);
-        // We'd need to fetch them all first to delete - for simplicity, we focus on the fresh upload
-        // Note: Batch limit is 500 operations
+        snapshot.docs.forEach((doc) => batch.delete(doc.ref));
+        await batch.commit();
       }
 
       // Batch upload (chunked for safety)
@@ -357,7 +365,9 @@ export default function App() {
                      (type === 'leads' ? getVal(item, ['leadid', 'lead id']) : 
                      (type === 'inventory' ? getVal(item, ['Vehicle Identification Number', 'vin']) : 
                      crypto.randomUUID()));
-           const docRef = doc(colRef, id || crypto.randomUUID());
+           // Ensure ID is a valid non-empty string for Firestore
+           const safeId = String(id || crypto.randomUUID()).replace(/\//g, '_');
+           const docRef = doc(colRef, safeId);
            batch.set(docRef, { data: item, updatedAt: new Date().toISOString() });
         });
         await batch.commit();
@@ -366,7 +376,7 @@ export default function App() {
       setSuccessMsg(`Synced ${newData.length} records to Cloud`);
       setTimeout(() => setSuccessMsg(''), 5000);
     } catch (e) {
-      console.error(e);
+      console.error("Sync Error:", e);
     } finally {
       setIsUploading(false);
     }
@@ -374,14 +384,16 @@ export default function App() {
 
   const clearData = async () => {
     if(!user) return;
-    if(window.confirm("System Reset? This will clear all data.")) {
+    if(window.confirm("System Reset? This will clear ALL dashboard data from the cloud.")) {
        const collections = ['opportunities', 'leads', 'inventory', 'bookings'];
        for (const colName of collections) {
-         // Firestore doesn't provide a direct "delete collection" method from client SDK easily
-         // In production, you'd iterate and delete or use a Cloud Function
-         // For now, we clear state to give immediate feedback
+         const colRef = collection(db, 'artifacts', appId, 'users', user.uid, colName);
+         const snapshot = await getDocs(colRef);
+         const batch = writeBatch(db);
+         snapshot.docs.forEach((doc) => batch.delete(doc.ref));
+         await batch.commit();
        }
-       setSuccessMsg("System Ready.");
+       setSuccessMsg("Cloud Clear.");
        setTimeout(() => setSuccessMsg(''), 3000);
     }
   };
