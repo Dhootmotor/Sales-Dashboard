@@ -4,7 +4,7 @@ import {
 } from 'recharts';
 import { 
   LayoutDashboard, Upload, Filter, TrendingUp, Users, Car, DollarSign, FileSpreadsheet, 
-  ArrowUpRight, ArrowDownRight, Clock, X, CheckCircle, Trash2, UserCheck
+  ArrowUpRight, ArrowDownRight, Clock, X, CheckCircle, Trash2, UserCheck, AlertTriangle, CloudOff
 } from 'lucide-react';
 
 /**
@@ -16,13 +16,45 @@ import { initializeApp } from 'https://esm.sh/firebase@11.1.0/app';
 import { getAuth, onAuthStateChanged, signInWithCustomToken, signInAnonymously } from 'https://esm.sh/firebase@11.1.0/auth';
 import { getFirestore, doc, setDoc, getDoc, collection, query, onSnapshot, deleteDoc, writeBatch, getDocs } from 'https://esm.sh/firebase@11.1.0/firestore';
 
-// --- FIREBASE CONFIGURATION ---
-// These globals are provided by the environment
-const firebaseConfig = JSON.parse(__firebase_config);
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+// --- ROBUST CONFIGURATION LOADER ---
+const getAppConfig = () => {
+  let config = null;
+  let appId = 'default-app-id';
+  let authToken = null;
+
+  try {
+    // Try to get from environment globals (Canvas/Preview mode)
+    if (typeof __firebase_config !== 'undefined' && __firebase_config) {
+      config = typeof __firebase_config === 'string' ? JSON.parse(__firebase_config) : __firebase_config;
+    }
+    if (typeof __app_id !== 'undefined') appId = __app_id;
+    if (typeof __initial_auth_token !== 'undefined') authToken = __initial_auth_token;
+
+    // Fallback to local storage or env for Vercel deployments
+    if (!config && typeof window !== 'undefined') {
+      const stored = localStorage.getItem('SALES_IQ_FIREBASE_CONFIG');
+      if (stored) config = JSON.parse(stored);
+    }
+  } catch (e) {
+    console.error("Config loader error:", e);
+  }
+
+  return { config, appId, authToken };
+};
+
+const { config: firebaseConfig, appId, authToken } = getAppConfig();
+
+// Initialize Firebase services only if config exists
+let app, auth, db;
+if (firebaseConfig) {
+  try {
+    app = initializeApp(firebaseConfig);
+    auth = getAuth(app);
+    db = getFirestore(app);
+  } catch (e) {
+    console.error("Firebase Initialization Failed:", e);
+  }
+}
 
 // --- STYLES ---
 const GlobalStyles = () => (
@@ -40,7 +72,7 @@ const GlobalStyles = () => (
     ::-webkit-scrollbar-track { background: #f1f5f9; }
     ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
     
-    .animate-fade-in { animation: fadeIn 0.2s ease-out forwards; }
+    .animate-fade-in { animation: fadeIn 0.3s ease-out forwards; }
     @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
     
     .comparison-toggle {
@@ -266,13 +298,47 @@ export default function App() {
   const [timeView, setTimeView] = useState('CY'); 
   const [filters, setFilters] = useState({ model: 'All', location: 'All', consultant: 'All' });
 
+  // Fallback for missing Firebase
+  if (!firebaseConfig) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-900 text-white p-6">
+        <GlobalStyles />
+        <div className="max-w-md w-full space-y-6 text-center animate-fade-in">
+          <div className="mx-auto w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center">
+            <CloudOff className="w-8 h-8" />
+          </div>
+          <div className="space-y-2">
+            <h1 className="text-2xl font-black italic uppercase tracking-tighter">Sales IQ IQ Offline</h1>
+            <p className="text-slate-400 text-sm">Dashboard is waiting for Firebase credentials to activate cloud storage features.</p>
+          </div>
+          <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 text-left">
+            <div className="flex items-center gap-2 text-blue-400 font-bold text-xs mb-2">
+              <AlertTriangle className="w-3 h-3" /> HOW TO FIX
+            </div>
+            <ol className="text-[11px] text-slate-300 space-y-2 list-decimal list-inside">
+              <li>Open your Firebase Project Settings.</li>
+              <li>Copy the <code className="bg-black/40 px-1 rounded text-pink-400">firebaseConfig</code> object.</li>
+              <li>Add it to your environment variables or provide it to the dashboard.</li>
+            </ol>
+          </div>
+          <p className="text-[10px] text-slate-500">The screen is blank because initialization failed safely.</p>
+        </div>
+      </div>
+    );
+  }
+
   // --- INITIALIZATION ---
   useEffect(() => {
+    if (!auth) return;
     const initAuth = async () => {
-      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-        await signInWithCustomToken(auth, __initial_auth_token);
-      } else {
-        await signInAnonymously(auth);
+      try {
+        if (typeof authToken !== 'undefined' && authToken) {
+          await signInWithCustomToken(auth, authToken);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (e) {
+        console.error("Auth error:", e);
       }
     };
     initAuth();
@@ -282,7 +348,7 @@ export default function App() {
 
   // --- DATA FETCHING ---
   useEffect(() => {
-    if (!user) return;
+    if (!user || !db) return;
 
     const collections = ['opportunities', 'leads', 'inventory', 'bookings'];
     const unsubscribes = collections.map(colName => {
@@ -297,7 +363,9 @@ export default function App() {
         if (colName === 'bookings') setBookingData(data);
         
         setTimestamps(prev => ({...prev, [colName]: now}));
-      }, (err) => console.error(`Firestore error in ${colName}:`, err));
+      }, (err) => {
+        console.error(`Firestore error in ${colName}:`, err);
+      });
     });
 
     return () => unsubscribes.forEach(unsub => unsub());
@@ -342,7 +410,7 @@ export default function App() {
 
   // --- UPLOAD HANDLER ---
   const handleDataImport = async (newData, type, overwrite) => {
-    if (!user) return;
+    if (!user || !db) return;
     setIsUploading(true);
     try {
       const colRef = collection(db, 'artifacts', appId, 'users', user.uid, type);
@@ -365,7 +433,6 @@ export default function App() {
                      (type === 'leads' ? getVal(item, ['leadid', 'lead id']) : 
                      (type === 'inventory' ? getVal(item, ['Vehicle Identification Number', 'vin']) : 
                      crypto.randomUUID()));
-           // Ensure ID is a valid non-empty string for Firestore
            const safeId = String(id || crypto.randomUUID()).replace(/\//g, '_');
            const docRef = doc(colRef, safeId);
            batch.set(docRef, { data: item, updatedAt: new Date().toISOString() });
@@ -383,7 +450,7 @@ export default function App() {
   };
 
   const clearData = async () => {
-    if(!user) return;
+    if(!user || !db) return;
     if(window.confirm("System Reset? This will clear ALL dashboard data from the cloud.")) {
        const collections = ['opportunities', 'leads', 'inventory', 'bookings'];
        for (const colName of collections) {
