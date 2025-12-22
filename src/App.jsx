@@ -3,22 +3,26 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line 
 } from 'recharts';
 import { 
-  LayoutDashboard, Upload, Filter, TrendingUp, Users, Car, DollarSign, FileSpreadsheet, 
-  ArrowUpRight, ArrowDownRight, Clock, X, CheckCircle, Trash2, UserCheck, AlertTriangle, CloudOff, Database
+  LayoutDashboard, Upload, Filter, TrendingUp, TrendingDown, 
+  Users, Car, DollarSign, FileSpreadsheet, 
+  ArrowUpRight, ArrowDownRight, 
+  Clock, X, CheckCircle, Trash2, UserCheck, AlertTriangle, Database, CloudOff
 } from 'lucide-react';
 
 /**
- * Using esm.sh to import Supabase directly.
+ * Using esm.sh to import Supabase directly. 
+ * For your local project, you can keep your npm import: 
+ * import { createClient } from '@supabase/supabase-js';
  */
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
 
-// --- ROBUST CONFIGURATION LOADER ---
+// --- CONFIGURATION LOADER ---
 const getAppConfig = () => {
   let url = null;
   let anonKey = null;
 
   try {
-    // 1. Try to get from standard Vite environment variables
+    // 1. Try to get from standard environment variables (Vite/Vercel)
     if (typeof import.meta !== 'undefined' && import.meta.env) {
       url = import.meta.env.VITE_SUPABASE_URL;
       anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -30,7 +34,7 @@ const getAppConfig = () => {
       anonKey = window.VITE_SUPABASE_ANON_KEY || window.__SUPABASE_ANON_KEY;
     }
 
-    // 3. Fallback to Local Storage
+    // 3. Fallback to Local Storage (Manual Setup)
     if (!url && typeof window !== 'undefined') {
       url = localStorage.getItem('VITE_SUPABASE_URL');
       anonKey = localStorage.getItem('VITE_SUPABASE_ANON_KEY');
@@ -306,20 +310,19 @@ export default function App() {
             <Database className="w-8 h-8" />
           </div>
           <div className="space-y-2">
-            <h1 className="text-2xl font-black italic uppercase tracking-tighter">Sales IQ IQ Setup</h1>
-            <p className="text-slate-400 text-sm">Waiting for Supabase credentials to activate dashboard syncing.</p>
+            <h1 className="text-2xl font-black italic uppercase tracking-tighter">Sales IQ Supabase Setup</h1>
+            <p className="text-slate-400 text-sm">Please provide your Supabase credentials to activate the dashboard.</p>
           </div>
           <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 text-left">
             <div className="flex items-center gap-2 text-emerald-400 font-bold text-xs mb-3">
               <AlertTriangle className="w-3 h-3" /> ACTION REQUIRED
             </div>
             <ol className="text-[11px] text-slate-400 space-y-3 list-decimal list-inside leading-relaxed">
-              <li>Open your Supabase Project Settings > API.</li>
-              <li>Provide <code className="text-pink-400">VITE_SUPABASE_URL</code> and <code className="text-pink-400">VITE_SUPABASE_ANON_KEY</code> to the app environment.</li>
+              <li>Open your Supabase Project Settings {' > '} API.</li>
+              <li>Add <code className="text-pink-400">VITE_SUPABASE_URL</code> and <code className="text-pink-400">VITE_SUPABASE_ANON_KEY</code> to your environment.</li>
               <li>Ensure your tables (<code className="text-slate-200">opportunities, leads, inventory, bookings</code>) are created in the SQL Editor.</li>
             </ol>
           </div>
-          <p className="text-[10px] text-slate-500">The screen is blank because initialization is paused for security.</p>
         </div>
       </div>
     );
@@ -396,7 +399,8 @@ export default function App() {
   const timeLabels = useMemo(() => {
     if (oppData.length === 0) return { prevLabel: 'Prv', currLabel: 'Cur' };
     let maxDate = new Date(0);
-    oppData.forEach(d => {
+    const rawOpp = oppData.map(d => d.data || d);
+    rawOpp.forEach(d => {
         const date = getDateObj(getVal(d, ['createdon', 'createddate']));
         if (date > maxDate) maxDate = date;
     });
@@ -417,14 +421,10 @@ export default function App() {
     setIsUploading(true);
     try {
       if (overwrite) {
-        await supabase.from(type).delete().neq('id', '0'); // Delete all (with a safety dummy condition)
+        await supabase.from(type).delete().neq('id', '0');
       }
 
-      const conflictColumn = type === 'opportunities' ? 'id' : 
-                            (type === 'leads' ? 'leadid' : 
-                            (type === 'inventory' ? 'vin' : 'id'));
-
-      // Process and clean data to ensure it fits DB schema
+      // Process and clean data to ensure it fits DB schema via JSONB 'data' column
       const records = newData.map(item => {
         const id = type === 'opportunities' ? getVal(item, ['id', 'opportunityid']) : 
                   (type === 'leads' ? getVal(item, ['leadid', 'lead id']) : 
@@ -433,20 +433,25 @@ export default function App() {
         
         return {
           id: String(id || crypto.randomUUID()),
-          data: item, // Storing raw data in a JSONB column named 'data' is the safest way to prevent schema errors
+          data: item, // THIS IS THE KEY: We store raw data in a JSONB 'data' column
           updated_at: new Date().toISOString(),
           user_id: user?.id || null
         };
       });
 
-      const { error } = await supabase.from(type).upsert(records, { onConflict: 'id' });
-      if (error) throw error;
+      // Split into chunks of 100 for reliable Supabase ingest
+      const CHUNK_SIZE = 100;
+      for (let i = 0; i < records.length; i += CHUNK_SIZE) {
+        const chunk = records.slice(i, i + CHUNK_SIZE);
+        const { error } = await supabase.from(type).upsert(chunk, { onConflict: 'id' });
+        if (error) throw error;
+      }
 
       setSuccessMsg(`Synced ${newData.length} records to Supabase`);
       setTimeout(() => setSuccessMsg(''), 5000);
     } catch (e) {
       console.error("Supabase Sync Error:", e);
-      alert(`Sync Error: ${e.message}. Ensure columns 'id' (Text), 'data' (JSONB), 'updated_at' (Timestamptz) exist in your ${type} table.`);
+      alert(`Sync Error: ${e.message}. Please check your SQL Editor setup.`);
     } finally {
       setIsUploading(false);
     }
@@ -466,7 +471,6 @@ export default function App() {
 
   // --- FILTERING ---
   const getFilteredData = (data, dataType) => {
-    // Note: When using JSONB 'data' column, we access via item.data
     return data.map(d => d.data || d).filter(item => {
       if (dataType === 'inventory') {
         const itemModel = getVal(item, ['modellinefe', 'Model Line', 'Model']).trim();
